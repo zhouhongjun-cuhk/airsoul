@@ -19,7 +19,7 @@ import argparse
 import multiprocessing
 import numpy
 import random
-from l3c.metalang import metalang_generator_v3
+from xenoverse.metalang import metalang_generator
 
 def dump_data(path, idxes, configs):
     for idx in idxes:
@@ -27,7 +27,7 @@ def dump_data(path, idxes, configs):
             configs["output"] = path
         else:
             configs["output"] = "%s/lm_%05d.npy"%(path, idx)
-        metalang_generator_v3(**configs)
+        metalang_generator(**configs)
     
 
 if __name__=='__main__':
@@ -38,6 +38,9 @@ if __name__=='__main__':
     parser.add_argument('--vocab_size', type=int, default=32)
     parser.add_argument('--embedding_size', type=int, default=16)
     parser.add_argument('--hidden_size', type=int, default=64)
+    parser.add_argument('--n_gram', nargs='+', type=int, default=[2,3,4,5,6], help="A [List of] length n used for generating tasks")
+    parser.add_argument('--lambda_weight', type=float, default=5.0, help="Lambda weight multiplied for softmax sampling in MetaLangV2")
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--sequence_length', type=int, default=4096)
     parser.add_argument('--output_path', type=str, default="./metalm_data")
     parser.add_argument('--samples', type=int, default=1000, help="samples in each file")
