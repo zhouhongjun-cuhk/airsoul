@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 import math
 
 
-def expend_data2(
+def expend_data(
     observations,
     actions_behavior_id,
     actions_behavior_val,
@@ -89,7 +89,7 @@ def expend_data2(
         np.array(_bact_prior_arr)
     )
 
-def cut_data2(
+def cut_data(
     observations,
     actions_behavior_id,
     actions_behavior_val,
@@ -353,7 +353,7 @@ class MazeDataSet(Dataset):
                     rewards,
                     command,
                     actions_behavior_prior
-                ) = cut_data2(
+                ) = cut_data(
                     observations,
                     actions_behavior_id,
                     actions_behavior_val,
@@ -375,7 +375,7 @@ class MazeDataSet(Dataset):
                     rewards,
                     command,
                     actions_behavior_prior
-                ) = expend_data2(
+                ) = expend_data(
                     observations,
                     actions_behavior_id,
                     actions_behavior_val,
@@ -425,176 +425,6 @@ class MazeDataSet(Dataset):
         except Exception as e:
             print(f"Unexpected reading error founded when loading {path}: {e}")
             return None
-
-
-def cut_data(
-    observations,
-    actions_behavior_id,
-    actions_behavior_val,
-    actions_label_id,
-    actions_label_val,
-    rewards,
-    # BEVs,
-    position,
-    agent,
-    target,
-    percentage=1,
-    time_step=2_000,
-):
-
-    split_id = []  # select the start and end of the data
-    n_start = 0
-    n_end = 0
-    n_episode = 0
-
-    for i in range(len(observations)):
-        print(i)
-        if actions_behavior_id[i] == 7:  # end
-            n_episode += 1
-            n_end = i
-            delta = n_end - n_start
-            # delta = int((n_end - n_start) * percentage)
-            if delta == 0:
-                delta = 1
-            n_start = n_end - delta
-            split_id.append((n_start, n_end))
-            n_start = n_end+1
-        if n_episode*2 >= time_step:
-            break
-    # print("sum_data(split_id)", sum_data(split_id))
-    split_id = cut_data_(split_id, aim_len=time_step+1)
-    # print("sum_data(split_id)", sum_data(split_id))
-    print("split_id",split_id)
-    (
-        _obs_arr,
-        _bact_id_arr,
-        _lact_id_arr,
-        _bact_val_arr,
-        _lact_val_arr,
-        _reward_arr,
-        _bev_arr,
-        _position_arr,
-        _agent,
-        _target,
-    ) = ([], [], [], [], [], [], [], [], [], [])
-
-    for split in split_id:
-        n_b = split[0]
-        n_e = split[1]
-
-        _obs_arr.extend(observations[n_b : (n_e + 1)])
-        _bact_id_arr.extend(
-            actions_behavior_id[n_b : n_e + 1]
-        ) 
-        _bact_val_arr.extend(
-            actions_behavior_val[n_b : n_e + 1]
-        ) 
-        _lact_id_arr.extend(actions_label_id[n_b : n_e + 1]) 
-        _lact_val_arr.extend(
-            actions_label_val[n_b : n_e + 1]
-        ) 
-        _reward_arr.extend(rewards[n_b : n_e + 1]) 
-        # _bev_arr.extend(BEVs[n_b : (n_e + 1)]) 
-
-        _position_arr.extend(position[n_b : (n_e + 1)]) 
-        _agent.extend(agent[n_b : (n_e + 1)]) 
-        _target.extend(target[n_b : (n_e + 1)]) 
-
-    return (
-        np.array(_obs_arr),
-        np.array(_bact_id_arr),
-        np.array(_bact_val_arr),
-        np.array(_lact_id_arr),
-        np.array(_lact_val_arr),
-        np.array(_reward_arr),
-        # np.array(_bev_arr),
-        np.array(_position_arr),
-        _agent,
-        _target,
-    )
-
-def expend_data(
-    observations,
-    actions_behavior_id,
-    actions_behavior_val,
-    actions_label_id,
-    actions_label_val,
-    rewards,
-    # BEVs,
-    position,
-    agent,
-    target,
-    percentage=2,
-):
-
-    def expend_delta(n_start, n_end, percentage):
-        fractional_part, integer_part = math.modf(percentage)
-        _split = []
-        for i in range(int(integer_part)):
-            _split.append([n_start, n_end])
-        delta = int((n_end - n_start) * fractional_part)
-        _split.append([n_end - delta, n_end])
-        return _split
-
-    split_id = []  # select the start and end of the data
-    n_start = 0
-    n_end = 0
-
-    for i in range(len(observations)):
-        if actions_behavior_id[i] == 7:
-            n_end = i
-            split_id.extend(expend_delta(n_start, n_end, percentage))
-            n_start = n_end
-
-    # print("split_id",split_id)
-    (
-        _obs_arr,
-        _bact_id_arr,
-        _lact_id_arr,
-        _bact_val_arr,
-        _lact_val_arr,
-        _reward_arr,
-        _bev_arr,
-        _position_arr,
-        _agent,
-        _target,
-    ) = ([], [], [], [], [], [], [], [], [], [])
-
-    for split in split_id:
-        n_b = split[0]
-        n_e = split[1]
-
-        _obs_arr.extend(observations[n_b : (n_e + 1)])
-        _bact_id_arr.extend(
-            actions_behavior_id[n_b : n_e + 1]
-        ) 
-        _bact_val_arr.extend(
-            actions_behavior_val[n_b : n_e + 1]
-        ) 
-        _lact_id_arr.extend(actions_label_id[n_b : n_e + 1]) 
-        _lact_val_arr.extend(
-            actions_label_val[n_b : n_e + 1]
-        ) 
-        _reward_arr.extend(rewards[n_b : n_e + 1]) 
-        # _bev_arr.extend(BEVs[n_b : (n_e + 1)]) 
-
-        _position_arr.extend(position[n_b : (n_e + 1)]) 
-        _agent.extend(agent[n_b : (n_e + 1)]) 
-        _target.extend(target[n_b : (n_e + 1)]) 
-
-    return (
-        np.array(_obs_arr),
-        np.array(_bact_id_arr),
-        np.array(_bact_val_arr),
-        np.array(_lact_id_arr),
-        np.array(_lact_val_arr),
-        np.array(_reward_arr),
-        # np.array(_bev_arr),
-        np.array(_position_arr),
-        _agent,
-        _target,
-    )
-
 
 
 
