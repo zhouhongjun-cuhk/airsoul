@@ -20,7 +20,8 @@ from pathlib import Path
 import random
 import re
 from airsoul.utils import AgentVisualizer
-from online_rl_utils import DiscreteEnvWrapper, OnlineRL, LoadRLModel, Switch2
+from online_rl_utils import OnlineRL, LoadRLModel
+from gym_env_wapper import DiscreteEnvWrapper, Switch2, DarkroomEnv
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
 from l3c.anymdp import AnyMDPTaskSampler
 from l3c.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
