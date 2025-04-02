@@ -3,10 +3,102 @@ import xenoverse
 import numpy
 import multiprocessing
 import argparse
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 
 from xenoverse.anymdp import AnyMDPTaskSampler
 from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
 from xenoverse.utils import pseudo_random_seed
+
+
+class RolloutLogger(BaseCallback):
+    """
+    A custom callback for logging the total reward and episode length of each rollout.
+    
+    :param env_name: Name of the environment.
+    :param max_rollout: Maximum number of rollouts to perform.
+    :param max_step: Maximum steps per episode.
+    :param downsample_trail: Downsample trail parameter.
+    :param verbose: Verbosity level: 0 = no output, 1 = info, 2 = debug
+    """
+    def __init__(self, max_rollout, max_step, downsample_trail, verbose=0):
+        super(RolloutLogger, self).__init__(verbose)
+        self.max_rollout = max_rollout
+        self.max_steps = max_step
+        self.current_rollout = 0
+        self.reward_sums = []
+        self.step_counts = []
+        self.success_rate = []
+        self.success_rate_f = 0.0
+        self.downsample_trail = downsample_trail
+        self.episode_reward = 0
+        self.episode_length = 0
+
+    def _on_step(self) -> bool:
+        """
+        This method is called after every step in the environment.
+        Here we update the current episode's reward and length.
+        """
+        # Accumulate the episode reward
+        self.episode_reward += self.locals['rewards'][0]
+        self.episode_length += 1
+        
+        if 'terminated' in self.locals:
+            terminated = self.locals['terminated'][0]
+        elif 'dones' in self.locals:  # Fallback to 'done' flag
+            done = self.locals['dones'][0]
+            terminated = done  # Assuming 'done' means the episode has ended, either successfully or due to failure
+
+        if 'truncated' in self.locals:
+            truncated = self.locals['truncated'][0]
+        elif 'infos' in self.locals and len(self.locals['infos']) > 0:
+            info = self.locals['infos'][0]
+            truncated = info.get('TimeLimit.truncated', False)
+
+        if terminated or truncated:
+            # Episode is done, record the episode information
+
+            self.reward_sums.append(self.episode_reward)
+            self.step_counts.append(self.episode_length)
+
+            # Reset episode counters
+            self.episode_reward = 0
+            self.episode_length = 0
+
+            # Check if we have reached the maximum number of rollouts
+            self.current_rollout += 1
+            if self.current_rollout >= self.max_rollout:
+                if self.verbose >= 1:
+                    print(f"Reached maximum rollouts ({self.max_rollout}). Stopping training.")
+                self.model.stop_training = True
+                return False
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """
+        This event is triggered before updating the policy.
+        For algorithms that do not use rollout_buffer, this method can be left empty.
+        """
+        pass
+
+    def _on_training_end(self) -> None:
+        """
+        This event is triggered at the end of training.
+        We can perform any final logging here if needed.
+        """
+        pass
+
+class WrapperEnv(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def reset(self, **kwargs):
+        obs, info = super().reset()
+        return obs
+
+    def step(self, action):
+        obs, reward, done, info = super().step(action)
+        return obs, reward, done, info
 
 def test_AnyMDP_task(result, ns=16, na=5, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
@@ -46,28 +138,19 @@ def test_AnyMDP_task(result, ns=16, na=5,
         print("[Trivial task], skip")
         return
 
-    solver_q = AnyMDPSolverQ(env, gamma=gamma)
-    for epoch in range(max_epochs_q):
-        last_obs, info = env.reset()
-        epoch_rew = 0
-        done = False
-        epoch_step = 0
-        while not done:
-            act = solver_q.policy(last_obs)
-            obs, rew, done, info = env.step(act)
-            solver_q.learner(last_obs, act, obs, rew, done)
-            epoch_rew += rew
-            epoch_step += 1
-            last_obs = obs
-        epoch_rews_q.append(epoch_rew)
-        epoch_steps_q.append(epoch_step)
+    log_callback = RolloutLogger(max_epochs_q, 4000, sub_sample, verbose=1)
+    model = PPO(policy='MlpPolicy', env=WrapperEnv(env), verbose=1)
+    model.learn(total_timesteps=int(4e6), callback=log_callback)
+    epoch_rews_q = log_callback.reward_sums
+    epoch_steps_q = log_callback.step_counts
 
     normalized_q = (numpy.array(epoch_rews_q) - rnd_perf) / max(1.0e-2, opt_perf - rnd_perf)
     steps = normalized_q.shape[0] // sub_sample
     eff_size = steps * sub_sample
     normalized_q = numpy.reshape(normalized_q[:eff_size], (-1, sub_sample))
     normalized_steps = numpy.reshape(numpy.array(epoch_steps_q)[:eff_size], (-1, sub_sample))
-    result.put((numpy.mean(normalized_q, axis=-1), numpy.mean(normalized_steps, axis=-1), opt_perf - rnd_perf))
+    normalized_steps = numpy.cumsum(numpy.sum(normalized_steps, axis=-1), axis=0)
+    result.put((numpy.mean(normalized_q, axis=-1), normalized_steps, opt_perf - rnd_perf))
             
 if __name__=="__main__":
     # Parse the arguments, should include the output file name
@@ -77,7 +160,7 @@ if __name__=="__main__":
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
     parser.add_argument("--min_state_space", type=int, default=16, help="minimum state dim in task, default:8")
     parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
-    parser.add_argument("--max_epochs", type=int, default=2000, help="multiple epochs:default:1000")
+    parser.add_argument("--max_epochs", type=int, default=20, help="multiple epochs:default:1000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)

@@ -2,7 +2,7 @@ import numpy
 import gymnasium
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import A2C, PPO, DQN, TD3
-from l3c.anymdp import AnyMDPSolverOpt
+from xenoverse.anymdp import AnyMDPSolverOpt
 
 class MapStateToDiscrete:
     def __init__(self, env_name, state_space_dim1, state_space_dim2):
