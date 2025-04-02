@@ -1,7 +1,7 @@
 import numpy
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import A2C, PPO, DQN, TD3
-from l3c.anymdp import AnyMDPSolverOpt
+from xenoverse.anymdp import AnyMDPSolverOpt
 # For QLearning class
 from gymnasium import spaces
 from stable_baselines3.common.base_class import BaseAlgorithm

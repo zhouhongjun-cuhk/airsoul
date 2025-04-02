@@ -23,9 +23,9 @@ from airsoul.utils import AgentVisualizer
 from online_rl_utils import OnlineRL, LoadRLModel
 from gym_env_wapper import DiscreteEnvWrapper, Switch2, DarkroomEnv
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
-from l3c.anymdp import AnyMDPTaskSampler
-from l3c.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
-from l3c.anymdp.solver import get_final_transition, get_final_reward
+from xenoverse.anymdp import AnyMDPTaskSampler
+from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
+from xenoverse.anymdp.solver import get_final_transition, get_final_reward
 from stable_baselines3 import DQN, A2C, TD3, PPO
 
 
