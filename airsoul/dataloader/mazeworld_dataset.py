@@ -219,6 +219,7 @@ class MazeDataSet(Dataset):
             directories.extend(directory)
         else:
             directories.append(directory)
+        self.directories = directories
         for d in directories:
             count = 0
             for folder in os.listdir(d):
@@ -232,7 +233,7 @@ class MazeDataSet(Dataset):
                         if os.path.isdir(os.path.join(folder_path, file)): # if there is a subfolder, then it is not a single layer folder
                             single_layer_flag = False
                             break
-                    if max_maze != None and count > max_maze:
+                    if max_maze != None and count >= max_maze:
                         break
                     if single_layer_flag:
                         self.file_list.append(folder_path)
@@ -242,7 +243,7 @@ class MazeDataSet(Dataset):
                             subfolder_path = os.path.join(folder_path, subfolder)
                             if os.path.isdir(subfolder_path):
                                 self.file_list.append(subfolder_path)
-                                count += 1
+                        count += 1
             # file_list = os.listdir(d)
             # self.file_list.extend([os.path.join(d, file) for file in file_list])
             
@@ -253,9 +254,13 @@ class MazeDataSet(Dataset):
 
     def __getitem__(self, index):
         path = self.file_list[index]
+        if "traj" in path.split("/")[-1] or "path" in path.split("/")[-1]:
+            folder_name = os.path.join(path.split("/")[-2], path.split("/")[-1])
+            # print(folder_name)
+        else:
+            folder_name = path.split("/")[-1]
         if "maze" in path:
             if self.folder_verbose:
-                folder_name = path.split("/")[-1]
                 return self.__get_maze__(index), folder_name
             return self.__get_maze__(index)
         else:
