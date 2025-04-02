@@ -57,6 +57,7 @@ def run_maze_epoch(
 
         obs, reward, done, info = maze_env.step(bact_id)
         observation_list.append(obs)
+        observation = obs
         reward_list.append(reward)
         bev_list.append(maze_env.get_local_map()[1])
         cmd_list.append(info["command"])
