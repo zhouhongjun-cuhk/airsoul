@@ -1,15 +1,35 @@
-import gym
+import gymnasium as gym
 import xenoverse
 import numpy
 import multiprocessing
 import argparse
+from typing import Callable
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from xenoverse.anymdp import AnyMDPTaskSampler
 from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
 from xenoverse.utils import pseudo_random_seed
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
+class WrapperEnv(gym.Wrapper):
+    def reset(self, **kwargs):
+        obs, info = super().reset()
+        return obs, info
+
+def make_env(task) -> Callable:
+    """
+    :param env_id: 环境ID
+    :param rank: 子进程的索引
+    :param seed: 随机种子
+    :return: 创建环境的函数
+    """
+    def _init() -> gym.Env:
+        env = gym.make("anymdp-v0")
+        env.set_task(task)
+        return WrapperEnv(env)
+    return _init
 
 class RolloutLogger(BaseCallback):
     """
@@ -88,47 +108,38 @@ class RolloutLogger(BaseCallback):
         """
         pass
 
-class WrapperEnv(gym.Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-
-    def reset(self, **kwargs):
-        obs, info = super().reset()
-        return obs
-
-    def step(self, action):
-        obs, reward, done, info = super().step(action)
-        return obs, reward, done, info
-
-def test_AnyMDP_task(result, ns=16, na=5, 
+def test_AnyMDP_task(task, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
-                     sub_sample=100, gamma=0.9):
-    env = gym.make("anymdp-v0")
-    task = AnyMDPTaskSampler(ns, na)
-    env.set_task(task)
+                     sub_sample=100, gamma=0.9,
+                     num_cpu=64):
+
+    env_single = gym.make("anymdp-v0")
+    env_single.set_task(task)
+    env = SubprocVecEnv([make_env(task) for i in range(num_cpu)])
+
     epoch_rews_rnd = []
     epoch_rews_opt = []
     epoch_rews_q =[]
     epoch_steps_q = []
 
     for epoch in range(max_epochs_rnd):
-        obs, info = env.reset()
+        obs, info = env_single.reset()
         epoch_rew = 0
-        done = False
-        while not done:
-            act = env.action_space.sample()
-            obs, rew, done, info = env.step(act)
+        term, trunc = False
+        while not term and not trunc:
+            act = env_single.action_space.sample()
+            obs, rew, term, trunc, info = env_single.step(act)
             epoch_rew += rew
         epoch_rews_rnd.append(epoch_rew)
 
-    solver_opt = AnyMDPSolverOpt(env, gamma=gamma)
+    solver_opt = AnyMDPSolverOpt(env_single, gamma=gamma)
     for epoch in range(max_epochs_rnd):
-        obs, info = env.reset()
+        obs, info = env_single.reset()
         epoch_rew = 0
         done = False
-        while not done:
+        while not term and not trunc:
             act = solver_opt.policy(obs)
-            obs, rew, done, info = env.step(act)
+            obs, rew, term, trunc, info = env.step(act)
             epoch_rew += rew
         epoch_rews_opt.append(epoch_rew)
 
@@ -136,7 +147,7 @@ def test_AnyMDP_task(result, ns=16, na=5,
     opt_perf = numpy.mean(epoch_rews_opt)
     if(opt_perf - rnd_perf < 1.0e-2):
         print("[Trivial task], skip")
-        return
+        return None, None, None
 
     log_callback = RolloutLogger(max_epochs_q, 4000, sub_sample, verbose=1)
     model = PPO(policy='MlpPolicy', env=WrapperEnv(env), verbose=1)
@@ -150,7 +161,7 @@ def test_AnyMDP_task(result, ns=16, na=5,
     normalized_q = numpy.reshape(normalized_q[:eff_size], (-1, sub_sample))
     normalized_steps = numpy.reshape(numpy.array(epoch_steps_q)[:eff_size], (-1, sub_sample))
     normalized_steps = numpy.cumsum(numpy.sum(normalized_steps, axis=-1), axis=0)
-    result.put((numpy.mean(normalized_q, axis=-1), normalized_steps, opt_perf - rnd_perf))
+    return numpy.mean(normalized_q, axis=-1), normalized_steps, opt_perf - rnd_perf
             
 if __name__=="__main__":
     # Parse the arguments, should include the output file name
@@ -162,43 +173,35 @@ if __name__=="__main__":
     parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
     parser.add_argument("--max_epochs", type=int, default=20, help="multiple epochs:default:1000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
+    parser.add_argument("--tasks", type=int, default=32, help="number of tasks")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
     args = parser.parse_args()
 
     # Data Generation
-    processes = []
-    res = multiprocessing.Manager().Queue()
-    for worker_id in range(args.workers):
-        process = multiprocessing.Process(target=test_AnyMDP_task, 
-                args=(res,
-                      int(args.state_num), 
-                      int(args.action_num),
-                      200, 
-                      args.max_epochs, 
-                      args.sub_sample,
-                      args.gamma))
-        processes.append(process)
-        process.start()
-
-    for process in processes:
-        process.join() 
-    
     scores = []
     steps = []
     deltas = []
-    while not res.empty():
-        score, step, delta = res.get()
-        scores.append(score)
-        steps.append(step)
-        deltas.append(delta)
+    for taskid in range(args.tasks):
+        task = AnyMDPTaskSampler(ns=int(args.state_num), na=int(args.action_num))
+        q_res, step_res, delta = test_AnyMDP_task(task,
+                                                  max_epochs_rnd=200, 
+                                                  max_epochs_q=args.max_epochs, 
+                                                  sub_sample=args.sub_sample,
+                                                  gamma=args.gamma,
+                                                  num_cpu=args.workers)
+        print(f"finshi task {taskid}")
+        if(q_res is not None):
+            scores.append(q_res)
+            steps.append(step_res)
+            deltas.append(delta)
 
     scores = numpy.array(scores)
     s_mean = numpy.mean(scores, axis=0)
     s2_mean = numpy.mean(scores**2, axis=0)
     std = numpy.sqrt(s2_mean - s_mean**2)
     conf = 2.0 * std / numpy.sqrt(scores.shape[0])
-
+    
     steps = numpy.cumsum(numpy.array(steps))
     sp_mean = numpy.mean(steps, axis=0)
     sp2_mean = numpy.mean(steps**2, axis=0)

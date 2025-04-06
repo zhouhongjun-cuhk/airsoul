@@ -114,8 +114,9 @@ if __name__=="__main__":
     s_mean = numpy.mean(scores, axis=0)
     s2_mean = numpy.mean(scores**2, axis=0)
     std = numpy.sqrt(s2_mean - s_mean**2)
-    
-    steps = numpy.array(steps)
+    conf = 2.0 * std / numpy.sqrt(scores.shape[0])
+
+    steps = numpy.cumsum(numpy.array(steps))
     sp_mean = numpy.mean(steps, axis=0)
     sp2_mean = numpy.mean(steps**2, axis=0)
     pstd = numpy.sqrt(sp2_mean - sp_mean**2)
@@ -128,5 +129,5 @@ if __name__=="__main__":
     fout = open(args.output_path, "w")
     for i in range(s_mean.shape[0]):
         fout.write("%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n" % 
-              ((i+1)*args.sub_sample, s_mean[i], std[i], sp_mean[i], pstd[i], d_mean, dstd))
+              ((i+1)*args.sub_sample, s_mean[i], conf[i], sp_mean[i], pstd[i], d_mean, dstd))
     fout.close()
