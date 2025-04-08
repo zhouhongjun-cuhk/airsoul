@@ -120,7 +120,7 @@ class E2EObjNavSA(nn.Module):
                 need_cache=False, 
                 state_dropout=state_dropout,
                 update_memory=update_memory)
-        
+                
         z_pred, a_pred, r_pred = self.decision_model.post_decoder(wm_out, pm_out)
         
         # Encode the last frame to latent space
@@ -261,7 +261,6 @@ class E2EObjNavSA(nn.Module):
 
         return loss
     
-
     def preprocess_others(self, 
                    vals, 
                    single_batch=True, 
@@ -277,13 +276,13 @@ class E2EObjNavSA(nn.Module):
         else:
             raise TypeError(f"Unsupported type of values: {type(vals)}")
         
-        if(single_batch):
+        if(single_batch and vals.dim() < default_dim + 2):
             vals = vals.unsqueeze(0)
-        if(single_step):
+        if(single_step and vals.dim() < default_dim + 2):
             vals = vals.unsqueeze(1)
         
         if(default_dim is not None):
-            assert vals.dim == default_dim + 2, f"Input dimension of actions must be {default_dim + 2}, acquire {vals.dim}"
+            assert vals.dim() == default_dim + 2, f"Input dimension of actions must be {default_dim + 2}, acquire {vals.dim()}"
 
         return vals
 
@@ -296,33 +295,26 @@ class E2EObjNavSA(nn.Module):
             return None
 
         if(isinstance(observations, numpy.ndarray)):
-            # if observations.dtype == numpy.uint8:
-            #     # Normalize the image to [0, 1], the observation is raw image
-            observations = observations.astype(numpy.float32) / 255.0
-
             obs = torch.tensor(observations, device=next(self.parameters()).device)
         elif(isinstance(observations, torch.Tensor)):
             obs = observations.to(next(self.parameters()).device)
         else:
             raise TypeError(f"Unsupported type of observations: {type(observations)}")
         
-        if(single_batch):
+        if(single_batch and obs.dim() < 5):
             obs = obs.unsqueeze(0)
-
-        if(single_step and obs.dim() == 4):
+        if(single_step and obs.dim() < 5):
             obs = obs.unsqueeze(1)
-        
+            
+        obs = img_pro(obs)
         if(raw_images):
             assert obs.dim() == 5, f"Input dimension of observations of raw images must be 5, acquire {obs.dim()}"
-            obs = obs.permute(0, 1, 4, 2, 3)
-
             with torch.no_grad():
                 z_rec, _ = self.vae(obs)
         else:
             z_rec = obs
 
         return z_rec
-
     
     def preprocess(self, 
                 observations, 
@@ -334,7 +326,7 @@ class E2EObjNavSA(nn.Module):
                 single_step=True, 
                 raw_images=True):
         z_rec = self.preprocess_observation(observations, single_batch=single_batch, single_step=single_step, raw_images=raw_images)
-        act = self.preprocess_others(actions, single_batch=single_batch, single_step=single_step, default_dim=0)
+        actions = self.preprocess_others(actions, single_batch=single_batch, single_step=single_step, default_dim=0)
         prompts = self.preprocess_others(prompts, single_batch=single_batch, single_step=single_step, default_dim=1)
         tags = self.preprocess_others(tags, single_batch=single_batch, single_step=single_step, default_dim=0)
         rewards = self.preprocess_others(rewards, single_batch=single_batch, single_step=single_step, default_dim=0)
@@ -357,7 +349,6 @@ class E2EObjNavSA(nn.Module):
         #   actions: [B, NT]
         # Outputs:
         #   new_cache: [B, NC, H] if need_cache is True
-
 
         o,p,t,a,r = self.preprocess(
                         observations,
@@ -383,10 +374,11 @@ class E2EObjNavSA(nn.Module):
         #   action: [B]
         return torch.multinomial(logits / temperature, num_samples=1)
     
-
     def generate_states_only(self, 
+                            prompts,
                             current_observation, 
                             action_trajectory,
+                            history_prompts=None, 
                             history_observation=None,
                             history_action=None,
                             history_update_memory=True, 
@@ -406,9 +398,12 @@ class E2EObjNavSA(nn.Module):
         # Outputs:
         #   predict_observations: o_{t+1}, ..., o_{t+n}
 
-        his_obs, his_act = self.preprocess(
+        his_obs, his_prompts, his_tags, his_act, his_rewards = self.preprocess(
                     history_observation, 
+                    history_prompts,
+                    None,  # No tags
                     history_action, 
+                    None, # No rewards
                     single_batch=single_batch, 
                     single_step=history_single_step, 
                     raw_images=raw_images)
@@ -418,16 +413,22 @@ class E2EObjNavSA(nn.Module):
             single_batch=single_batch, 
             single_step=True, 
             raw_images=raw_images)
-        
-
         act = self.preprocess_others(action_trajectory, 
                                      single_batch=single_batch,
-                                     single_step=future_single_step)
+                                     single_step=future_single_step, 
+                                     default_dim=0)
+        prompts = self.preprocess_others(prompts, single_batch=single_batch, single_step=True, default_dim=1)
+
+        tags = None
+
+        rewards = None
 
         if(autoregression_update_memory and not history_update_memory):
             raise ValueError("Autoregression update memory cannot be True when history update memory is False")
 
         # If do not update memory, then we need to cache it to keep consistency
+        history_need_cache = False
+        autoregression_need_cache = False
         if(not history_update_memory):
             history_need_cache = True
         if(not autoregression_update_memory):
@@ -435,33 +436,46 @@ class E2EObjNavSA(nn.Module):
 
 
         if(his_obs is not None):
+
             with torch.no_grad():
-                _, _, cache = self.decision_model(his_obs,    
-                                                    his_act, 
-                                                    cache=cache,need_cache=history_need_cache, 
-                                                    update_memory=history_update_memory)
+                #  input is o_arr, p_arr, t_arr, a_arr, r_arr
+                _, _, cache = self.decision_model(
+                                                his_obs,
+                                                his_prompts,
+                                                his_tags, # No tags
+                                                his_act, 
+                                                his_rewards, # No rewards
+                                                cache=cache,need_cache=history_need_cache, 
+                                                update_memory=history_update_memory)
         
         obs_out = [obs]
         for i in range(act.shape[1]):
             with torch.no_grad():
-                wm_out, pm_out, cache = self.decision_model(obs_out[-1], 
+                # input is o_arr, p_arr, t_arr, a_arr, r_arr
+                wm_out, pm_out, cache = self.decision_model(
+                                                obs_out[-1], 
+                                                prompts[:, i:i+1],
+                                                None, # tags[:, i:i+1], # No tags, which is None
                                                 act[:, i:i+1], 
+                                                None, # rewards[:, i:i+1], # No rewards, which is None
                                                 cache=cache, need_cache=autoregression_need_cache, 
                                                 update_memory=autoregression_update_memory)
                 
                 obs_n, _, _ = self.decision_model.post_decoder(wm_out, pm_out)
                 if self.config.decision_block.state_diffusion.enable:
                     obs_n = self.decision_model.s_diffusion.inference(cond=wm_out)[-1]
+                if i == 0:
+                    current_cache = cache
                 obs_out.append(obs_n)
 
         # Post Processing
-        obs_out = torch.cat(obs_out, dim=1)
+        obs_out = torch.cat(obs_out[1:], dim=1)
         if(raw_images):
             obs_out = img_post(self.vae.decoding(obs_out))
         if(need_numpy):
             obs_out = obs_out.cpu().detach().numpy()
 
-        return obs_out, cache
+        return obs_out, current_cache
     
     def generate_states_and_action(self, 
                             current_observation, 
@@ -488,7 +502,7 @@ class E2EObjNavSA(nn.Module):
         #   if(n = 1) and need_predict_states is False:
         #       return predict_actions a_{t} only
 
-        his_obs, his_act = self.preprocess(
+        his_obs, prompts, tags, his_act, rewards = self.preprocess(
                     history_observation, 
                     history_action, 
                     single_batch=single_batch, 
@@ -507,6 +521,8 @@ class E2EObjNavSA(nn.Module):
             raise ValueError("Autoregression update memory cannot be True when history update memory is False")
 
         # If do not update memory, then we need to cache it to keep consistency
+        history_need_cache = False
+        autoregression_need_cache = False
         if(not history_update_memory):
             history_need_cache = True
         if(not autoregression_update_memory):
