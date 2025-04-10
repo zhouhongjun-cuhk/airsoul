@@ -151,7 +151,7 @@ def test_AnyMDP_task(task,
         return None, None, None
 
     log_callback = RolloutLogger(max_epochs_q, 4000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=env, verbose=1)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=4096)
     model.learn(total_timesteps=int(4e6), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
@@ -191,7 +191,7 @@ if __name__=="__main__":
                                                   sub_sample=args.sub_sample,
                                                   gamma=args.gamma,
                                                   num_cpu=args.workers)
-        print(f"finish task {taskid}")
+        print(f"finish task {taskid}, {q_res} {step_res}, {delta}")
         if(q_res is not None):
             scores.append(q_res)
             steps.append(step_res)
@@ -203,7 +203,7 @@ if __name__=="__main__":
     std = numpy.sqrt(s2_mean - s_mean**2)
     conf = 2.0 * std / numpy.sqrt(scores.shape[0])
     
-    steps = numpy.cumsum(numpy.array(steps))
+    steps = numpy.cumsum(numpy.array(steps), axis=1)
     sp_mean = numpy.mean(steps, axis=0)
     sp2_mean = numpy.mean(steps**2, axis=0)
     pstd = numpy.sqrt(sp2_mean - sp_mean**2)
