@@ -25,10 +25,10 @@ def make_env(task) -> Callable:
     :param seed: 随机种子
     :return: 创建环境的函数
     """
-    def _init() -> gym.Env:
+    def _init():
         env = gym.make("anymdp-v0")
         env.set_task(task)
-        return WrapperEnv(env)
+        return env#WrapperEnv(env)
     return _init
 
 class RolloutLogger(BaseCallback):
@@ -92,6 +92,7 @@ class RolloutLogger(BaseCallback):
                     print(f"Reached maximum rollouts ({self.max_rollout}). Stopping training.")
                 self.model.stop_training = True
                 return False
+            print(f"Rollout:{self.current_rollout};Steps:{self.step_counts[-1]}")
         return True
 
     def _on_rollout_end(self) -> None:
@@ -125,7 +126,7 @@ def test_AnyMDP_task(task,
     for epoch in range(max_epochs_rnd):
         obs, info = env_single.reset()
         epoch_rew = 0
-        term, trunc = False
+        term, trunc = False, False
         while not term and not trunc:
             act = env_single.action_space.sample()
             obs, rew, term, trunc, info = env_single.step(act)
@@ -136,10 +137,10 @@ def test_AnyMDP_task(task,
     for epoch in range(max_epochs_rnd):
         obs, info = env_single.reset()
         epoch_rew = 0
-        done = False
+        term, trunc = False, False
         while not term and not trunc:
             act = solver_opt.policy(obs)
-            obs, rew, term, trunc, info = env.step(act)
+            obs, rew, term, trunc, info = env_single.step(act)
             epoch_rew += rew
         epoch_rews_opt.append(epoch_rew)
 
@@ -150,7 +151,7 @@ def test_AnyMDP_task(task,
         return None, None, None
 
     log_callback = RolloutLogger(max_epochs_q, 4000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=WrapperEnv(env), verbose=1)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1)
     model.learn(total_timesteps=int(4e6), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
@@ -171,9 +172,9 @@ if __name__=="__main__":
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
     parser.add_argument("--min_state_space", type=int, default=16, help="minimum state dim in task, default:8")
     parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
-    parser.add_argument("--max_epochs", type=int, default=20, help="multiple epochs:default:1000")
-    parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
-    parser.add_argument("--tasks", type=int, default=32, help="number of tasks")
+    parser.add_argument("--max_epochs", type=int, default=2000, help="multiple epochs:default:1000")
+    parser.add_argument("--workers", type=int, default=96, help="number of multiprocessing workers")
+    parser.add_argument("--tasks", type=int, default=256, help="number of tasks")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
     args = parser.parse_args()
@@ -183,14 +184,14 @@ if __name__=="__main__":
     steps = []
     deltas = []
     for taskid in range(args.tasks):
-        task = AnyMDPTaskSampler(ns=int(args.state_num), na=int(args.action_num))
+        task = AnyMDPTaskSampler(int(args.state_num), int(args.action_num))
         q_res, step_res, delta = test_AnyMDP_task(task,
                                                   max_epochs_rnd=200, 
                                                   max_epochs_q=args.max_epochs, 
                                                   sub_sample=args.sub_sample,
                                                   gamma=args.gamma,
                                                   num_cpu=args.workers)
-        print(f"finshi task {taskid}")
+        print(f"finish task {taskid}")
         if(q_res is not None):
             scores.append(q_res)
             steps.append(step_res)
