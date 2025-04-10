@@ -228,6 +228,9 @@ class OmniRLGenerator(GeneratorBase):
                             *benchmark_logger_keys, 
                             on=self.main, 
                             use_tensorboard=False)
+    
+    def epoch_end(self, epoch_id):
+        pass
 
     def task_sampler_anymdp(self, epoch_id=0):
         task_id = None
