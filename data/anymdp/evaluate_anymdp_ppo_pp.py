@@ -41,18 +41,18 @@ class RolloutLogger(BaseCallback):
     :param downsample_trail: Downsample trail parameter.
     :param verbose: Verbosity level: 0 = no output, 1 = info, 2 = debug
     """
-    def __init__(self, max_rollout, max_step, downsample_trail, verbose=0):
+    def __init__(self, num_envs, max_rollout, max_step, downsample_trail, verbose=0):
         super(RolloutLogger, self).__init__(verbose)
         self.max_rollout = max_rollout
         self.max_steps = max_step
-        self.current_rollout = 0
+        self.accumulate_rollout = 0
+        self.num_envs = num_envs
         self.reward_sums = []
         self.step_counts = []
         self.success_rate = []
-        self.success_rate_f = 0.0
         self.downsample_trail = downsample_trail
-        self.episode_reward = 0
-        self.episode_length = 0
+        self.episode_reward = numpy.asarray([0.0 for i in range(num_envs)])
+        self.episode_length = numpy.asarray([0 for i in range(num_envs)])
 
     def _on_step(self) -> bool:
         """
@@ -60,30 +60,15 @@ class RolloutLogger(BaseCallback):
         Here we update the current episode's reward and length.
         """
         # Accumulate the episode reward
-        self.episode_reward += self.locals['rewards'][0]
+        self.episode_reward += numpy.array(self.locals['rewards'])
         self.episode_length += 1
         
-        if 'terminated' in self.locals:
-            terminated = self.locals['terminated'][0]
-        elif 'dones' in self.locals:  # Fallback to 'done' flag
-            done = self.locals['dones'][0]
-            terminated = done  # Assuming 'done' means the episode has ended, either successfully or due to failure
-
-        if 'truncated' in self.locals:
-            truncated = self.locals['truncated'][0]
-        elif 'infos' in self.locals and len(self.locals['infos']) > 0:
-            info = self.locals['infos'][0]
-            truncated = info.get('TimeLimit.truncated', False)
-
-        if terminated or truncated:
-            # Episode is done, record the episode information
-
-            self.reward_sums.append(self.episode_reward)
-            self.step_counts.append(self.episode_length)
-
-            # Reset episode counters
-            self.episode_reward = 0
-            self.episode_length = 0
+        for i, (terminated, truncated) in enumerate(zip(self.locals['terminated'], self.locals['truncated'])):
+            if(terminated or truncated):
+                self.reward_sums.append(self.episode_reward[i])
+                self.step_counts.append(self.episode_length[i])
+                self.episode_reward[i] = 0
+                self.episode_length[i] = 0
 
             # Check if we have reached the maximum number of rollouts
             self.current_rollout += 1
@@ -150,9 +135,9 @@ def test_AnyMDP_task(task,
         print("[Trivial task], skip")
         return None, None, None
 
-    log_callback = RolloutLogger(max_epochs_q, 4000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=4096)
-    model.learn(total_timesteps=int(4e6), callback=log_callback)
+    log_callback = RolloutLogger(num_cpu, max_epochs_q, 5000, sub_sample, verbose=1)
+    model = PPO(policy='MlpPolicy', env=WrapperEnv(env), verbose=1, n_steps=2048 // num_cpu)
+    model.learn(total_timesteps=int(1e8), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
 
