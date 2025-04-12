@@ -137,7 +137,7 @@ def test_AnyMDP_task(task,
         return None, None, None
 
     log_callback = RolloutLogger(num_cpu, max_epochs_q, 5000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=WrapperEnv(env), verbose=1, n_steps=2048 // num_cpu)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=2048 // num_cpu)
     model.learn(total_timesteps=int(1e8), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
