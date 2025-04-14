@@ -3,8 +3,8 @@ import sys
 import sys
 
 custom_paths = [
-    '/home/wangfan/cassel/airsoul',
-    '/home/wangfan/cassel/airsoul/airsoul'
+    '/home/wangfan/airsoul',
+    '/home/wangfan/airsoul/airsoul'
 ]
 for path in custom_paths[::-1]:
     sys.path.insert(0, path)
