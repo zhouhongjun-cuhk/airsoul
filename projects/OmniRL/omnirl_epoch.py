@@ -11,7 +11,10 @@ from airsoul.utils import EpochManager, GeneratorBase, Logger
 from airsoul.utils import tag_vocabulary, tag_mapping_id, tag_mapping_gamma
 from airsoul.dataloader import AnyMDPDataSet, AnyMDPv2DataSet, AnyMDPDataSetContinuousState, AnyMDPDataSetContinuousStateAction
 
-import gymnasium 
+import math
+import cv2
+import gymnasium
+import mujoco
 import gym
 import imageio
 import numpy
@@ -26,6 +29,10 @@ from l3c.anymdp import AnyMDPTaskSampler
 from l3c.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
 from l3c.anymdp.solver import get_final_transition, get_final_reward
 from stable_baselines3 import DQN, A2C, TD3, PPO
+from stable_baselines3.common.callbacks import BaseCallback
+from scipy.spatial.transform import Rotation
+
+from test_go2 import CustomGo2Env
 
 
 def string_mean_var(downsample_length, res):
@@ -194,7 +201,9 @@ class OmniRLGenerator(GeneratorBase):
         elif(self.config.env.lower().find("pendulum") >= 0):
             self.task_sampler = self.task_sampler_pendulum
         elif(self.config.env.lower().find("switch") >= 0):
-            self.task_sampler = self.task_sampler_switch
+            self.task_sampler = self.task_sampler_switch    
+        elif(self.config.env.lower().find("test_go2") >= 0):
+            self.task_sampler = self.task_sampler_test_Go2 
         else:
             log_fatal("Unsupported environment:", self.config.env)
 
@@ -205,7 +214,7 @@ class OmniRLGenerator(GeneratorBase):
         else:
             self.tasks = None
 
-        logger_keys = ["step", "reward", "state_prediction", "reward_prediction", "success_rate"]
+        logger_keys = ["step", "reward"]
         benchmark_logger_keys = ["step", "reward", "success_rate"]
 
         self.stat = DistStatistics(*logger_keys)
@@ -305,7 +314,14 @@ class OmniRLGenerator(GeneratorBase):
         self.env = Switch2(n_agents=2, full_observable=True, max_steps=self.config.max_steps)
         return None
 
+    def task_sampler_test_Go2(self, epoch_id=0):
+        velocity_command = self.config.velocity_command
+        self.env = CustomGo2Env(velocity_command)
+        return None
+
     def reward_shaping(self, done, terminated, reward):
+        if(self.config.env.lower().find("test_Go2") >= 0):
+            reward = reward
         if(self.config.env.lower().find("lake") >= 0):
             if done and reward < 0.5:
                 reward = -1.0
@@ -744,8 +760,8 @@ class OmniRLGenerator(GeneratorBase):
         total_step = 0
         pred_state_dist = None
 
-        interactive_prompt = numpy.array([3]) # opt3 with gamma 0.994
-        self.interactive_tag = numpy.array([7]) # Unknown, let model deside current policy quality 
+        interactive_prompt = numpy.array([10.0,0.0,0.0]) # opt3 with gamma 0.994
+        self.interactive_tag = numpy.array([3]) # Unknown, let model deside current policy quality 
 
         if self.config.learn_from_data:
             self.in_context_learn_from_teacher(epoch_id)
@@ -755,6 +771,7 @@ class OmniRLGenerator(GeneratorBase):
             done = False
             trail_reward = 0.0
             trail_reward_shaped = 0.0
+            loss = 0.0
             trail_obs_loss = 0.0
             trail_reward_loss = 0.0
             trail_state_arr = []
@@ -765,7 +782,7 @@ class OmniRLGenerator(GeneratorBase):
             trail_state_arr.append(previous_state)
             obs_arr.append(previous_state)
             if(pred_state_dist is not None):
-                trail_obs_loss += -numpy.log(pred_state_dist[int(previous_state)].item())
+                trail_obs_loss +=  np.sum((pred_state_dist - new_state)**2)#TODO:不需要这个世界模型
             temp = self._scheduler(total_step)
             while not done:
                 # Generate action, world model prediction
@@ -777,16 +794,17 @@ class OmniRLGenerator(GeneratorBase):
                     need_numpy=True,
                     single_batch=True,
                     future_prediction=True)
-                env_action = action % self.config.action_clip 
-                # Interact with environment         
-                new_state, new_reward, terminated, truncated, *_ = self.env.step(env_action)
+                # env_action = action % self.config.action_clip #TODO 这是干啥用的
+                # Interact with environment  
+
+                new_state, new_reward, terminated, truncated, *_ = self.env.step(action)
                 if self.config.env.lower().find("anymdp") >= 0:
                         done = terminated
                 else:
                     if terminated or truncated:
                         done = True
                 # Reward shaping
-                shaped_reward = self.reward_shaping(done, terminated, new_reward)
+                shaped_reward = self.reward_shaping(done, terminated, new_reward)#TODO 根据不同env的done的情况，调整奖励，我们的go2也需要调整
 
                 # collect data
                 trail_action_arr.append(action)
@@ -798,13 +816,13 @@ class OmniRLGenerator(GeneratorBase):
                 # collect gif frame
                 if self.config.save_gif and trail % self.config.save_gif_gap == 0: 
                     if self.config.env.lower().find("anymdp") < 0:
-                        frames.extend(self.env.render())
+                        frames.append(self.env.render())
                     else:
                         frames.append((previous_state, action, new_reward, new_state, done>0.1))
 
 
-                # start learning     
-                cache = self.model.module.in_context_learn(
+                # start learning
+                cache = self.model.module.in_context_learn(#TODO不确定这是干啥的
                     previous_state,
                     interactive_prompt,
                     self.interactive_tag,
@@ -822,7 +840,8 @@ class OmniRLGenerator(GeneratorBase):
                 obs_arr.append(new_state) 
                 previous_state = new_state
 
-                trail_obs_loss += -numpy.log(pred_state_dist[int(new_state)].item())
+                import numpy as np
+                trail_obs_loss +=  np.sum((pred_state_dist - new_state)**2)
                 trail_reward += new_reward
                 trail_reward_shaped += shaped_reward
                 trail_reward_loss += (shaped_reward - pred_reward) ** 2
@@ -833,6 +852,8 @@ class OmniRLGenerator(GeneratorBase):
                     print("Reach max_steps, break trail.")
                     done = True
                 if(done):
+                    print(5555555555555555)
+                    print(self.action_dim)
                     trail_action_arr.append(self.action_dim)
                     trail_reward_arr.append(0.0)
                     act_arr.append(self.action_dim)
@@ -841,12 +862,12 @@ class OmniRLGenerator(GeneratorBase):
                         new_state,
                         interactive_prompt,
                         self.interactive_tag,
-                        self.action_dim,
+                        action,
                         0.0)
                     if self.config.use_dym_tag:
                         self.in_context_learn_with_tag(trail_reward, step, trail_state_arr, trail_action_arr, trail_reward_arr)
                     # success rate
-                    succ_fail = self.is_success_fail(new_reward, trail_reward, terminated)
+                    succ_fail = self.is_success_fail(new_reward, trail_reward, terminated)#TODO需要写环境成功率的判断
                     if trail + 1 < self.config.downsample_trail:
                         success_rate_f = (1-1/(trail+1)) * success_rate_f + succ_fail / (trail+1)
                     else:
@@ -867,14 +888,15 @@ class OmniRLGenerator(GeneratorBase):
                         total_step,
                         step_trail[-1],
                         rew_stat[-1], 
-                        state_error[-1], 
-                        reward_error[-1],
-                        success_rate[-1])
+                        # state_error[-1], 
+                        # reward_error[-1],
+                        # success_rate[-1]
+                        )
 
         # Save gif
         if self.config.save_gif and self.config.env.lower().find("anymdp") < 0:
-            gif_path = f'{self.config.output}/gym.gif'
-            imageio.mimsave(gif_path, [numpy.array(frame) for frame in frames], fps=30)
+            gif_path = f'{self.config.output}/gym1.mp4'
+            imageio.mimsave(gif_path, frames, fps=30)
         elif self.config.save_gif and self.config.env.lower().find("anymdp") >= 0:
             print("start drawing")
             self.drawer.draw(frames)
@@ -883,8 +905,8 @@ class OmniRLGenerator(GeneratorBase):
         # Save step reward
         if self.max_total_steps > 1.0:
             array_to_save = numpy.array(rew_wo_done_arr)
-            if self.step_reward_nomalize_factor is not None:
-                array_to_save = array_to_save * self.step_reward_nomalize_factor + self.step_reward_nomalize_constant
+            # if self.step_reward_nomalize_factor is not None:
+            #     array_to_save = array_to_save * self.step_reward_nomalize_factor + self.step_reward_nomalize_constant
             file_path = f'{self.config.output}/step_reward/'
             if not os.path.exists(file_path):
                 os.makedirs(file_path)
@@ -928,9 +950,10 @@ class OmniRLGenerator(GeneratorBase):
                         self.config.max_trails,
                         final_results['step']['mean'],
                         final_results['reward']['mean'],
-                        final_results['state_prediction']['mean'],
-                        final_results['reward_prediction']['mean'],
-                        final_results['success_rate']['mean'])
+                        # final_results['state_prediction']['mean'],
+                        # final_results['reward_prediction']['mean'],
+                        # final_results['success_rate']['mean']
+                        )
             self.save_results(final_results, "result")
 
         # Benchmark Result

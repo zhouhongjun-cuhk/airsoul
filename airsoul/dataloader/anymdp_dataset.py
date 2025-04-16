@@ -91,11 +91,13 @@ class AnyMDPv2DataSet(AnyMDPDataSetBase):
             return None
 
         obs_arr = torch.from_numpy(data[0]).float()
-        pro_arr = torch.from_numpy(data[1].astype("int32")).long() 
+        pro_arr = torch.from_numpy(data[1]).float() 
         tag_arr = torch.from_numpy(data[2].astype("int32")).long() 
         bact_arr = torch.from_numpy(data[3]).float()
         rwd_arr = torch.from_numpy(data[4]).float()
         lact_arr = torch.from_numpy(data[5]).float()
+
+        print("pro_arr.dtype: ", pro_arr.dtype)
 
         # Orders: O-P-T-A-R and Action Label
         return obs_arr, pro_arr, tag_arr, bact_arr, rwd_arr, lact_arr

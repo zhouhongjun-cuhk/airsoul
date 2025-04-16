@@ -241,6 +241,8 @@ class POTARDecisionModel(nn.Module):
 
         var_dict = {}
         var_dict["o_in"] = self.s_encoder(observation_in).view(B, NT, 1, -1)
+        print(111111111111111111111)
+        print(a_arr)
         var_dict["a_in"] = self.a_encoder(a_arr).view(B, NT, 1, -1)
 
         # Insert Prompts, tags and rewards if necessary

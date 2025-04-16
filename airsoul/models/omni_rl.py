@@ -206,7 +206,7 @@ class OmniRL(POTARDecisionModel):
         if(not self.p_included):
             pro_in = None
         elif(not isinstance(prompt, torch.Tensor)):
-            pro_in = torch.tensor([prompt], dtype=torch.int64).to(device)
+            pro_in = torch.tensor([prompt], dtype=torch.float32).to(device)
         else:
             pro_in = prompt.to(device)
         
@@ -369,6 +369,9 @@ class OmniRL(POTARDecisionModel):
         else:
             rew_in = rew_in.to(torch.int32)
 
+        obs_in = obs_in.to(torch.float32)
+        pro_in = pro_in.to(torch.float32)
+        act_in = act_in.to(torch.float32)
         # observation, prompt, tag, action, reward; update memory = true
         _, _, new_cache = self.forward(
             obs_in,
