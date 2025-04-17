@@ -11,18 +11,25 @@ from xenoverse.anymdp import AnyMDPTaskSampler
 from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
 from xenoverse.utils import pseudo_random_seed
 
+def make_env():
+    env = DiscreteEnvWrapper(gym.make("Pendulum-v1", g=9.81), 
+            'pendulum', 
+            action_space=5, 
+            state_space_dim1=12, 
+            state_space_dim2=5, 
+            reward_shaping = False, 
+            skip_frame=0)
+    env_opt_reward = -385
+    return env, env_opt_reward
+
 def test_AnyMDP_task(result, 
                      max_epochs_rnd=200, 
                      max_epochs_q=10000,
                      sub_sample=100, 
-                     gamma=0.999):
-    env = DiscreteEnvWrapper(gym.make("Pendulum-v1", g=9.81), 
-                        'pendulum', 
-                        action_space=5, 
-                        state_space_dim1=12, 
-                        state_space_dim2=5, 
-                        reward_shaping = False, 
-                        skip_frame=0)
+                     gamma=0.999,
+                     exploration=0.005,
+                     lr=0.01):
+    env, opt_perf = make_env()
     epoch_rews_rnd = []
     epoch_rews_q =[]
     epoch_steps_q = []
@@ -38,12 +45,8 @@ def test_AnyMDP_task(result,
         epoch_rews_rnd.append(epoch_rew)
 
     rnd_perf = numpy.mean(epoch_rews_rnd)
-    opt_perf = -400
-    if(opt_perf - rnd_perf < 1.0e-2):
-        print("[Trivial task], skip")
-        return
 
-    solver_q = AnyMDPSolverQ(env, gamma=gamma, c=0.01)
+    solver_q = AnyMDPSolverQ(env, gamma=gamma, c=exploration, alpha=lr)
     for epoch in range(max_epochs_q):
         last_obs, info = env.reset()
         epoch_rew = 0
@@ -71,12 +74,13 @@ if __name__=="__main__":
     # Parse the arguments, should include the output file name
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_path", type=str, default="./res.txt", help="Output result path")
-    parser.add_argument("--min_state_space", type=int, default=16, help="minimum state dim in task, default:8")
     parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
     parser.add_argument("--max_epochs", type=int, default=10000, help="multiple epochs:default:1000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
     parser.add_argument("--sub_sample", type=int, default=10)
-    parser.add_argument("--gamma", type=float, default=0.999)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--exploration", type=float, default=0.005)
+    parser.add_argument("--learning_rate", type=float, default=0.01)
     args = parser.parse_args()
 
     # Data Generation
@@ -88,7 +92,9 @@ if __name__=="__main__":
                       200, 
                       args.max_epochs, 
                       args.sub_sample,
-                      args.gamma))
+                      args.gamma,
+                      args.exploration,
+                      args.learning_rate))
         processes.append(process)
         process.start()
 

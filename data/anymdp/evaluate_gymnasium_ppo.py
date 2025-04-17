@@ -16,32 +16,22 @@ from xenoverse.utils import pseudo_random_seed
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-
-ENV_NAME = "CliffWalking-v0"
-OPT_PERF =  -13.0
-
-class WrapperEnv(gym.Wrapper):
-    def reset(self, **kwargs):
-        obs, info = super().reset()
-        return obs, info
-
 def make_env() -> Callable:
-    """
-    :param env_id: 环境ID
-    :param rank: 子进程的索引
-    :param seed: 随机种子
-    :return: 创建环境的函数
-    """
+    # Change the environment here
+    ENV_NAME = "CliffWalking-v0"
+    OPT_SCORE =  -13.0
+    kwargs = dict()
+    #kwargs.update()
     def _init():
-        env = DiscreteEnvWrapper(gym.make(ENV_NAME), 
-                            ENV_NAME, 
-                            action_space=4, 
-                            state_space_dim1=12, 
-                            state_space_dim2=5, 
-                            reward_shaping = False, 
-                            skip_frame=0)
-        return env#WrapperEnv(env)
-    return _init
+        env = DiscreteEnvWrapper(gym.make(ENV_NAME, **kwargs), 
+                                  ENV_NAME, 
+                                  action_space=4, 
+                                  state_space_dim1=12, 
+                                  state_space_dim2=5, 
+                                  reward_shaping=False, 
+                                  skip_frame=0)
+        return env
+    return _init, OPT_SCORE
 
 class RolloutLogger(BaseCallback):
     """
@@ -121,16 +111,10 @@ class RolloutLogger(BaseCallback):
 
 def test_AnyMDP_task(max_epochs_rnd=200, max_epochs_q=5000, 
                      sub_sample=100, gamma=0.9,
-                     num_cpu=64):
+                     num_cpu=64, n_steps=2048):
 
-    env_single = DiscreteEnvWrapper(gym.make(ENV_NAME), 
-                        ENV_NAME, 
-                        action_space=4, 
-                        state_space_dim1=12, 
-                        state_space_dim2=5, 
-                        reward_shaping = False, 
-                        skip_frame=0)
-    env = SubprocVecEnv([make_env() for i in range(num_cpu)])
+    env_single, opt_perf = make_env()
+    env = SubprocVecEnv([make_env()[0] for i in range(num_cpu)])
 
     epoch_rews_rnd = []
     epoch_rews_opt = []
@@ -148,13 +132,12 @@ def test_AnyMDP_task(max_epochs_rnd=200, max_epochs_q=5000,
         epoch_rews_rnd.append(epoch_rew)
 
     rnd_perf = numpy.mean(epoch_rews_rnd)
-    opt_perf = OPT_PERF
     if(opt_perf - rnd_perf < 1.0e-2):
         print("[Trivial task], skip")
         return None, None, None
 
     log_callback = RolloutLogger(num_cpu, max_epochs_q, 5000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=2048 // num_cpu)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=n_steps // num_cpu)
     model.learn(total_timesteps=int(1e8), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
@@ -180,6 +163,7 @@ if __name__=="__main__":
     parser.add_argument("--tasks", type=int, default=256, help="number of tasks")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--n_steps", type=float, default=2048)
     args = parser.parse_args()
 
     # Data Generation
@@ -192,7 +176,8 @@ if __name__=="__main__":
                                                   max_epochs_q=args.max_epochs, 
                                                   sub_sample=args.sub_sample,
                                                   gamma=args.gamma,
-                                                  num_cpu=args.workers)
+                                                  num_cpu=args.workers,
+                                                  n_steps=args.n_steps)
         print(f"finish task {taskid}, {q_res} {step_res}, {delta}")
         if(q_res is not None):
             if(len(scores) < 1 or last_len==numpy.shape(q_res)[0]):

@@ -13,11 +13,6 @@ from xenoverse.utils import pseudo_random_seed
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-class WrapperEnv(gym.Wrapper):
-    def reset(self, **kwargs):
-        obs, info = super().reset()
-        return obs, info
-
 def make_env(task) -> Callable:
     """
     :param env_id: 环境ID
@@ -28,7 +23,7 @@ def make_env(task) -> Callable:
     def _init():
         env = gym.make("anymdp-v0")
         env.set_task(task)
-        return env#WrapperEnv(env)
+        return env
     return _init
 
 class RolloutLogger(BaseCallback):
@@ -110,7 +105,7 @@ class RolloutLogger(BaseCallback):
 def test_AnyMDP_task(task, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
                      sub_sample=100, gamma=0.9,
-                     num_cpu=64):
+                     num_cpu=64, n_steps=2048):
 
     env_single = gym.make("anymdp-v0")
     env_single.set_task(task)
@@ -149,7 +144,7 @@ def test_AnyMDP_task(task,
         return None, None, None
 
     log_callback = RolloutLogger(num_cpu, max_epochs_q, 5000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=1000 // num_cpu)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=n_steps // num_cpu)
     model.learn(total_timesteps=int(1e8), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
@@ -165,16 +160,16 @@ def test_AnyMDP_task(task,
 if __name__=="__main__":
     # Parse the arguments, should include the output file name
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_path", type=str, default="./res.txt", help="Output result path")
-    parser.add_argument("--state_num", type=int, default=128, help="state num, default:128")
+    parser.add_argument("--output_path", type=str, default="./res_ppo_eval.txt", help="Output result path")
+    parser.add_argument("--state_num", type=int, default=16, help="state num, default:128")
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
-    parser.add_argument("--min_state_space", type=int, default=16, help="minimum state dim in task, default:8")
-    parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
     parser.add_argument("--max_epochs", type=int, default=10000, help="multiple epochs:default:1000")
-    parser.add_argument("--workers", type=int, default=96, help="number of multiprocessing workers")
+    parser.add_argument("--workers", type=int, default=64, help="number of multiprocessing workers")
     parser.add_argument("--tasks", type=int, default=256, help="number of tasks")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--n_steps", type=float, default=2048)
+
     args = parser.parse_args()
 
     # Data Generation
@@ -189,7 +184,8 @@ if __name__=="__main__":
                                                   max_epochs_q=args.max_epochs, 
                                                   sub_sample=args.sub_sample,
                                                   gamma=args.gamma,
-                                                  num_cpu=args.workers)
+                                                  num_cpu=args.workers,
+                                                  n_steps=args.n_steps)
         print(f"finish task {taskid}, {q_res} {step_res}, {delta}")
         if(q_res is not None):
             if(len(q_res) < 1 or last_len==numpy.shape(q_res)[0]):
