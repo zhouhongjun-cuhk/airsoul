@@ -354,4 +354,163 @@ class MAZEGenerator(GeneratorBase):
                     break 
 
 
+class general_generator(GeneratorBase): 
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+            print(f"{key}: {kwargs[key]}")
+        self.output_root = self.config.output_root
+        self.data_root = self.config.data_path
+        self.pred_len = self.config.pred_len
+        self.in_context_len = self.config.in_context_len
+        self.end_position = self.config.end_position
+        self.start_position = self.config.start_position
+        self.record_interval = self.config.record_interval
+        self.record_points = [i for i in range(self.start_position, self.end_position, self.record_interval)]
+        self.N_maze = self.config.N_maze
+        if self.output_root is not None:
+            if not os.path.exists(self.output_root):
+                os.makedirs(self.output_root)
+                print(f"Created output folder {self.output_root}")
+        else:
+            assert False, "output_root is required for general_generator"
+        if self.end_position > self.config.seq_len_causal:
+            assert False, "end_position should be smaller than seq_len_causal"
+        
+        self.logger_keys = ["validate_worldmodel_raw"]
+        self.stat = DistStatistics(*self.logger_keys)
+        if(self.config.has_attr("downsample_length")):
+            self.downsample_length = self.config.downsample_length
+        else:
+            self.downsample_length = 10
+
+    def preprocess(self):
+        self.dataloader = PrefetchDataLoader(
+            MazeDataSet(self.config.data_path, self.config.seq_len_causal, verbose=self.main, max_maze = self.N_maze, folder_verbose=True),
+            batch_size=1, # TODO 
+            rank=self.rank,
+            world_size=self.world_size
+            )
+        self.init_logger()
+        print(f"Preprocessed dataloader with {len(self.dataloader)} batches")
+    def init_logger(self):
+        if not hasattr(self, 'logger'):
+            self.logger = None
+        if(self.logger is None):
+            # self.logger_keys = self.get('logger_keys')
+            if(self.logger_keys is not None and len(self.logger_keys)!=0):
+                assert type(self.logger_keys) == list, \
+                    f"The logger_keys must be a list of string."
+                process_name = f"Generation-{self.__class__.__name__}"
+                max_iter = -1
+                log_file = self.log_config.log_file
+                self.logger = Logger(
+                        *self.logger_keys,
+                        on=self.main, 
+                        max_iter=max_iter,
+                        use_tensorboard=self.log_config.use_tensorboard,
+                        log_file=log_file,
+                        prefix=f"{self.run_name}-{process_name}",
+                        field=f"{self.log_config.tensorboard_log}/{self.run_name}-{process_name}")
+
+    def __call__(self, epoch_id):
+        import cv2
+        batch_size = 1 # TODO
+        pred_len = self.pred_len
+        loss_batch = []
+        cache_generate = False
+        video_generate = True
+        # history_cache = None
+        for batch_id, (batch_data, folder_name) in enumerate(self.dataloader):
+            folder_name = folder_name[0] # batch size is 1
+            if len(folder_name.split("/")) > 1:
+                parent_folder = folder_name.split("/")[0]
+                sub_name = folder_name.split("/")[1]
+                if not os.path.exists(os.path.join(self.output_root, parent_folder)):
+                    os.makedirs(os.path.join(self.output_root, parent_folder))
+
+
+            print(f"batch_id: {batch_id} processing {folder_name}")
+            output_folder_path = os.path.join(self.output_root, folder_name)
+            if not os.path.exists(output_folder_path):
+                os.makedirs(output_folder_path)
+            cmd_arr, obs_arr, behavior_actid_arr, label_actid_arr, behavior_act_arr, label_act_arr, rew_arr = batch_data
+            obs_arr = obs_arr.permute(0, 1, 4, 2, 3) # (B, T, H, W, C) to (B, T, C, H, W)
+            states = obs_arr.contiguous()
+            
+            actions = behavior_actid_arr.contiguous()
+
+            history_cache = None
+            loss_records = []
+            pred_records = []
+            real_records = []
+            for checkpoint_id in range(0, self.end_position):
+                end = min(checkpoint_id, len(states))
+                pred_obs_list, history_cache = self.model.module.generate_states_only(
+                        prompts=cmd_arr[:, end:end+pred_len],
+                        current_observation=states[:, end:end+1], 
+                        action_trajectory=actions[:, end:end+pred_len],
+                        history_observation=None, #states[start:end],
+                        history_action=None, #actions[start:end],
+                        history_update_memory=False, 
+                        autoregression_update_memory=False, # TOTEST
+                        cache=history_cache,
+                        single_batch=True,
+                        history_single_step=False,
+                        future_single_step=False,
+                        raw_images=True,
+                        need_numpy=False)
+                # print(f"pred_obs_list: {pred_obs_list}")
+                real = states[:, end+1:end+1+pred_len]
+                mse_loss, cnt = weighted_loss(pred_obs_list.cpu(), 
+                                        loss_type="mse",
+                                        gt=real, 
+                                        need_cnt=True,
+                                        )
+                mse_loss = mse_loss/255/255
+                print(f"check_point {checkpoint_id} with mse_loss: {mse_loss/cnt}")
+                loss_records.append(mse_loss.detach().numpy()/cnt)  
+                import copy
+                if checkpoint_id in self.record_points and cache_generate == True:
+                    np.save(os.path.join(output_folder_path, f"cache_{checkpoint_id}.npy"), history_cache)
+                    print(f"Saved cache to {os.path.join(output_folder_path, f'cache_{checkpoint_id}.npy')}")
+                pred_records.append(pred_obs_list.cpu().detach().numpy())
+                real_records.append(real.cpu().detach().numpy().copy())
+            loss_records = np.array(loss_records)
+            loss_batch.append(loss_records)
+            real_records = np.array(real_records)
+            pred_records = np.array(pred_records)
+
+        loss_batch = np.array(loss_batch)
+        bsz = loss_batch.shape[0]
+        seg_num = loss_batch.shape[1] // self.downsample_length
+        valid_seq_len = seg_num * self.downsample_length
+        loss_batch = np.mean(loss_batch[:, :valid_seq_len].reshape(bsz, seg_num, -1), axis=-1)
+        self.stat.gather(self.device,
+                validate_worldmodel_raw=loss_batch[0], 
+                count=cnt)
+
+    def epoch_end(self, epoch_id):
+        stat_res = self.stat()
+        if not hasattr(self, 'logger'):
+            self.logger = None
+        if(self.logger is not None):
+            self.logger(stat_res["validate_worldmodel_raw"]["mean"],
+                    epoch=epoch_id)
+        if(self.extra_info is not None):
+            if(self.extra_info.lower() == 'validate' and self.main):
+                if not os.path.exists(self.config.output):
+                    os.makedirs(self.config.output)
+                for key_name in stat_res:
+                    res_text = string_mean_var(self.downsample_length, stat_res[key_name])
+                    file_path = f'{self.config.output}/result_{key_name}.txt'
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    with open(file_path, 'w') as f_model:
+                        f_model.write(res_text)
+
+
+
 
