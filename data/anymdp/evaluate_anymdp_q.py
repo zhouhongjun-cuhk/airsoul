@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import xenoverse
 import numpy
 import multiprocessing
@@ -22,10 +22,10 @@ def test_AnyMDP_task(result, ns=16, na=5,
     for epoch in range(max_epochs_rnd):
         obs, info = env.reset()
         epoch_rew = 0
-        done = False
-        while not done:
+        terminated, truncated = False, False
+        while not terminated and not truncated:
             act = env.action_space.sample()
-            obs, rew, done, info = env.step(act)
+            obs, rew, terminated, truncated, info = env.step(act)
             epoch_rew += rew
         epoch_rews_rnd.append(epoch_rew)
 
@@ -33,10 +33,10 @@ def test_AnyMDP_task(result, ns=16, na=5,
     for epoch in range(max_epochs_rnd):
         obs, info = env.reset()
         epoch_rew = 0
-        done = False
-        while not done:
+        terminated, truncated = False, False
+        while not terminated and not truncated:
             act = solver_opt.policy(obs)
-            obs, rew, done, info = env.step(act)
+            obs, rew, terminated, truncated, info = env.step(act)
             epoch_rew += rew
         epoch_rews_opt.append(epoch_rew)
 
@@ -50,12 +50,12 @@ def test_AnyMDP_task(result, ns=16, na=5,
     for epoch in range(max_epochs_q):
         last_obs, info = env.reset()
         epoch_rew = 0
-        done = False
         epoch_step = 0
-        while not done:
+        terminated, truncated = False, False
+        while not terminated and not truncated:
             act = solver_q.policy(last_obs)
-            obs, rew, done, info = env.step(act)
-            solver_q.learner(last_obs, act, obs, rew, done)
+            obs, rew, terminated, truncated, info = env.step(act)
+            solver_q.learner(last_obs, act, obs, rew, terminated or truncated)
             epoch_rew += rew
             epoch_step += 1
             last_obs = obs
@@ -67,7 +67,7 @@ def test_AnyMDP_task(result, ns=16, na=5,
     eff_size = steps * sub_sample
     normalized_q = numpy.reshape(normalized_q[:eff_size], (-1, sub_sample))
     normalized_steps = numpy.reshape(numpy.array(epoch_steps_q)[:eff_size], (-1, sub_sample))
-    result.put((numpy.mean(normalized_q, axis=-1), numpy.mean(normalized_steps, axis=-1), opt_perf - rnd_perf))
+    result.put((numpy.mean(normalized_q, axis=-1), numpy.cumsum(numpy.sum(normalized_steps, axis=-1)), opt_perf - rnd_perf))
             
 if __name__=="__main__":
     # Parse the arguments, should include the output file name
@@ -116,7 +116,7 @@ if __name__=="__main__":
     std = numpy.sqrt(s2_mean - s_mean**2)
     conf = 2.0 * std / numpy.sqrt(scores.shape[0])
 
-    steps = numpy.cumsum(numpy.array(steps))
+    steps = numpy.array(steps)
     sp_mean = numpy.mean(steps, axis=0)
     sp2_mean = numpy.mean(steps**2, axis=0)
     pstd = numpy.sqrt(sp2_mean - sp_mean**2)
