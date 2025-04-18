@@ -1,5 +1,13 @@
 import os
 import sys
+
+custom_paths = [
+    '/home/wangfan/airsoul',
+    '/home/wangfan/airsoul/airsoul'
+]
+for path in custom_paths[::-1]:
+    sys.path.insert(0, path)
+
 from airsoul.models import OmniRL
 from airsoul.utils import Runner
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))

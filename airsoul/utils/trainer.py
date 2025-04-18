@@ -183,6 +183,12 @@ def EpochManager(cls):
                         check_model_validity(self.model.module)
                         save_model_path = model_path(self.config.save_model_path, epoch_id)
                         torch.save(self.model.state_dict(), save_model_path)
+                        # Save learning rate.
+                        current_lr = self.optimizer.param_groups[0]['lr']
+                        lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}_iter_{acc_iter}.txt")
+                        with open(lr_file_path, 'w') as f:
+                            f.write(f"epoch: {epoch_id}, iteration: {acc_iter}, learning_rate: {current_lr:.6f}")
+                        log_debug(f"Saved checkpoint to {save_model_path} and learning rate {current_lr:.6f} to {lr_file_path}", on=self.main)
                     need_break = True
 
                 if(not self.is_training):
@@ -195,6 +201,11 @@ def EpochManager(cls):
                 check_model_validity(self.model.module)
                 save_model_path = model_path(self.config.save_model_path, epoch_id)
                 torch.save(self.model.state_dict(), save_model_path)
+                current_lr = self.optimizer.param_groups[0]['lr']
+                lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}.txt")
+                with open(lr_file_path, 'w') as f:
+                    f.write(f"epoch: {epoch_id}, learning_rate: {current_lr:.6f}")
+                log_debug(f"Saved checkpoint to {save_model_path} and learning rate {current_lr:.6f} to {lr_file_path}", on=self.main)
 
             yield True
 
