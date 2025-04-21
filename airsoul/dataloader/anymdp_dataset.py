@@ -19,6 +19,7 @@ class AnyMDPDataSetBase(Dataset):
             file_list = os.listdir(d)
             self.file_list.extend([os.path.join(d, file) for file in file_list])
             
+        random.shuffle(self.file_list)
         self.time_step = time_step
 
         if(verbose):
