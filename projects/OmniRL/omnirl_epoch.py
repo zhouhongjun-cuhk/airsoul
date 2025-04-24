@@ -25,7 +25,6 @@ from gym_env_wapper import DiscreteEnvWrapper, Switch2, DarkroomEnv
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
 from xenoverse.anymdp import AnyMDPTaskSampler
 from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
-from xenoverse.anymdp.solver import get_final_transition, get_final_reward
 from stable_baselines3 import DQN, A2C, TD3, PPO
 
 
@@ -196,6 +195,8 @@ class OmniRLGenerator(GeneratorBase):
             self.task_sampler = self.task_sampler_pendulum
         elif(self.config.env.lower().find("switch") >= 0):
             self.task_sampler = self.task_sampler_switch
+        elif(self.config.env.lower().find("darkroom") >= 0):
+            self.task_sampler = self.task_sampler_darkroom
         else:
             log_fatal("Unsupported environment:", self.config.env)
 
@@ -307,6 +308,11 @@ class OmniRLGenerator(GeneratorBase):
 
     def task_sampler_switch(self, epoch_id=0):
         self.env = Switch2(n_agents=2, full_observable=True, max_steps=self.config.max_steps)
+        return None
+
+    def task_sampler_darkroom(self, epoch_id=0):
+        state_space_dim, _ = self.extract_state_space_dimensions(self.config.env.lower(), "darkroom")
+        self.env = DarkroomEnv(state_space_dim,self.config.max_steps)
         return None
 
     def reward_shaping(self, done, terminated, reward):
@@ -470,6 +476,7 @@ class OmniRLGenerator(GeneratorBase):
         return True
     
     def get_exp_q(self):
+        from xenoverse.anymdp.solver import get_final_transition, get_final_reward
         t_mat = get_final_transition(
             transition=self.env.transition_matrix,
             reset_states=self.env.reset_states,
