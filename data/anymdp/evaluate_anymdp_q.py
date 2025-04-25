@@ -18,7 +18,8 @@ def resample_task(task):
 
 def test_AnyMDP_task(worker_id, result, ns=16, na=5, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
-                     sub_sample=10, gamma=0.99):
+                     sub_sample=100, gamma=0.9,
+                     exploration=0.005, lr=0.01):
     env = gym.make("anymdp-v0")
     task = AnyMDPTaskSampler(ns, na, verbose=True)
     #task = resample_task(task)
@@ -55,7 +56,7 @@ def test_AnyMDP_task(worker_id, result, ns=16, na=5,
         print("[Trivial task], skip")
         return
 
-    solver_q = AnyMDPSolverQ(env, gamma=gamma, alpha=0.10, c=0.01)
+    solver_q = AnyMDPSolverQ(env, gamma=gamma, c=exploration, alpha=lr)
     for epoch in range(max_epochs_q):
         last_obs, info = env.reset()
         epoch_rew = 0
@@ -85,11 +86,14 @@ if __name__=="__main__":
     parser.add_argument("--output_path", type=str, default="./res.txt", help="Output result path")
     parser.add_argument("--state_num", type=int, default=16, help="state num, default:16")
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
-    parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
     parser.add_argument("--max_epochs", type=int, default=10000, help="multiple epochs:default:10000")
+    parser.add_argument("--max_epochs", type=int, default=2000, help="multiple epochs:default:1000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--exploration", type=float, default=0.005)
+    parser.add_argument("--learning_rate", type=float, default=0.01)
+
     args = parser.parse_args()
 
     # Data Generation
@@ -104,7 +108,9 @@ if __name__=="__main__":
                       200, 
                       args.max_epochs, 
                       args.sub_sample,
-                      args.gamma))
+                      args.gamma,
+                      args.exploration,
+                      args.learning_rate))
         processes.append(process)
         process.start()
 
