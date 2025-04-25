@@ -109,7 +109,7 @@ class RolloutLogger(BaseCallback):
 
 def test_AnyMDP_task(task, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
-                     sub_sample=100, gamma=0.9,
+                     sub_sample=100, gamma=0.9, n_steps=2048,
                      num_cpu=64):
 
     env_single = gym.make("anymdp-v0")
@@ -141,6 +141,9 @@ def test_AnyMDP_task(task,
             obs, rew, term, trunc, info = env_single.step(act)
             epoch_rew += rew
         epoch_rews_opt.append(epoch_rew)
+    print(solver_opt.value_matrix)
+    for s in range(solver_opt.value_matrix.shape[0]):
+        print(s, numpy.argmax(solver_opt.value_matrix[s]))
 
     rnd_perf = numpy.mean(epoch_rews_rnd)
     opt_perf = numpy.mean(epoch_rews_opt)
@@ -149,7 +152,7 @@ def test_AnyMDP_task(task,
         return None, None, None
 
     log_callback = RolloutLogger(num_cpu, max_epochs_q, 5000, sub_sample, verbose=1)
-    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=1000 // num_cpu)
+    model = PPO(policy='MlpPolicy', env=env, verbose=1, n_steps=n_steps // num_cpu)
     model.learn(total_timesteps=int(1e8), callback=log_callback)
     epoch_rews_q = log_callback.reward_sums
     epoch_steps_q = log_callback.step_counts
@@ -175,6 +178,7 @@ if __name__=="__main__":
     parser.add_argument("--tasks", type=int, default=256, help="number of tasks")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--n_steps", type=int, default=2048)
     args = parser.parse_args()
 
     # Data Generation
@@ -189,10 +193,11 @@ if __name__=="__main__":
                                                   max_epochs_q=args.max_epochs, 
                                                   sub_sample=args.sub_sample,
                                                   gamma=args.gamma,
+                                                  n_steps=args.n_steps,
                                                   num_cpu=args.workers)
         print(f"finish task {taskid}, {q_res} {step_res}, {delta}")
         if(q_res is not None):
-            if(len(q_res) < 1 or last_len==numpy.shape(q_res)[0]):
+            if(len(scores) < 1 or last_len==numpy.shape(q_res)[0]):
                 scores.append(q_res)
                 steps.append(step_res)
                 deltas.append(delta)

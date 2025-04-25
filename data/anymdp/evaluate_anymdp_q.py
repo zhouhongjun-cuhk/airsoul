@@ -3,16 +3,25 @@ import xenoverse
 import numpy
 import multiprocessing
 import argparse
+import numpy
 
 from xenoverse.anymdp import AnyMDPTaskSampler
-from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
+from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverMBRL, AnyMDPSolverQ
 from xenoverse.utils import pseudo_random_seed
 
-def test_AnyMDP_task(result, ns=16, na=5, 
+# for comparison
+def resample_task(task):
+    task["transition"] = numpy.clip(numpy.random.normal(size=task["transition"].shape), 0.0, None)
+    task["transition"] = task["transition"] / numpy.sum(task["transition"], axis=-1, keepdims=True)
+    task["reward"] = numpy.random.normal(size=task["reward"].shape)
+    return task
+
+def test_AnyMDP_task(worker_id, result, ns=16, na=5, 
                      max_epochs_rnd=200, max_epochs_q=5000, 
-                     sub_sample=100, gamma=0.9):
+                     sub_sample=10, gamma=0.99):
     env = gym.make("anymdp-v0")
-    task = AnyMDPTaskSampler(ns, na)
+    task = AnyMDPTaskSampler(ns, na, verbose=True)
+    #task = resample_task(task)
     env.set_task(task)
     epoch_rews_rnd = []
     epoch_rews_opt = []
@@ -29,7 +38,7 @@ def test_AnyMDP_task(result, ns=16, na=5,
             epoch_rew += rew
         epoch_rews_rnd.append(epoch_rew)
 
-    solver_opt = AnyMDPSolverOpt(env, gamma=gamma)
+    solver_opt = AnyMDPSolverOpt(env, gamma=0.98)
     for epoch in range(max_epochs_rnd):
         obs, info = env.reset()
         epoch_rew = 0
@@ -42,11 +51,11 @@ def test_AnyMDP_task(result, ns=16, na=5,
 
     rnd_perf = numpy.mean(epoch_rews_rnd)
     opt_perf = numpy.mean(epoch_rews_opt)
-    if(opt_perf - rnd_perf < 1.0e-2):
+    if(opt_perf - rnd_perf < 0.01):
         print("[Trivial task], skip")
         return
 
-    solver_q = AnyMDPSolverQ(env, gamma=gamma)
+    solver_q = AnyMDPSolverQ(env, gamma=gamma, alpha=0.10, c=0.01)
     for epoch in range(max_epochs_q):
         last_obs, info = env.reset()
         epoch_rew = 0
@@ -55,29 +64,29 @@ def test_AnyMDP_task(result, ns=16, na=5,
         while not terminated and not truncated:
             act = solver_q.policy(last_obs)
             obs, rew, terminated, truncated, info = env.step(act)
-            solver_q.learner(last_obs, act, obs, rew, terminated or truncated)
+            solver_q.learner(last_obs, act, obs, rew, terminated, truncated)
             epoch_rew += rew
             epoch_step += 1
             last_obs = obs
         epoch_rews_q.append(epoch_rew)
         epoch_steps_q.append(epoch_step)
 
-    normalized_q = (numpy.array(epoch_rews_q) - rnd_perf) / max(1.0e-2, opt_perf - rnd_perf)
+    normalized_q = numpy.clip((numpy.array(epoch_rews_q) - rnd_perf) / max(1.0e-2, opt_perf - rnd_perf), 0.0, 1.0)
     steps = normalized_q.shape[0] // sub_sample
     eff_size = steps * sub_sample
     normalized_q = numpy.reshape(normalized_q[:eff_size], (-1, sub_sample))
     normalized_steps = numpy.reshape(numpy.array(epoch_steps_q)[:eff_size], (-1, sub_sample))
     result.put((numpy.mean(normalized_q, axis=-1), numpy.cumsum(numpy.sum(normalized_steps, axis=-1)), opt_perf - rnd_perf))
+    print(f"finish task： {worker_id}")
             
 if __name__=="__main__":
     # Parse the arguments, should include the output file name
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_path", type=str, default="./res.txt", help="Output result path")
-    parser.add_argument("--state_num", type=int, default=128, help="state num, default:128")
+    parser.add_argument("--state_num", type=int, default=16, help="state num, default:16")
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
-    parser.add_argument("--min_state_space", type=int, default=16, help="minimum state dim in task, default:8")
     parser.add_argument("--max_steps", type=int, default=4000, help="max steps, default:4000")
-    parser.add_argument("--max_epochs", type=int, default=2000, help="multiple epochs:default:1000")
+    parser.add_argument("--max_epochs", type=int, default=10000, help="multiple epochs:default:10000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
     parser.add_argument("--sub_sample", type=int, default=10)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -88,7 +97,8 @@ if __name__=="__main__":
     res = multiprocessing.Manager().Queue()
     for worker_id in range(args.workers):
         process = multiprocessing.Process(target=test_AnyMDP_task, 
-                args=(res,
+                args=(worker_id,
+                      res,
                       int(args.state_num), 
                       int(args.action_num),
                       200, 
@@ -115,6 +125,7 @@ if __name__=="__main__":
     s2_mean = numpy.mean(scores**2, axis=0)
     std = numpy.sqrt(s2_mean - s_mean**2)
     conf = 2.0 * std / numpy.sqrt(scores.shape[0])
+    print(f"Number of valid tasks: {scores.shape[0]}")
 
     steps = numpy.array(steps)
     sp_mean = numpy.mean(steps, axis=0)
