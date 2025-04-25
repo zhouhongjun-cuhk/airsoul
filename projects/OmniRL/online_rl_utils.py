@@ -1,28 +1,29 @@
 import numpy
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import A2C, PPO, DQN, TD3
-from xenoverse.anymdp import AnyMDPSolverOpt
+from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverQ
 # For QLearning class
 from gymnasium import spaces
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, Schedule
 from stable_baselines3.common.utils import get_schedule_fn
 from typing import Optional, Tuple, Union
+# For CQL
+from cql import CQL
 
 class QLearning(BaseAlgorithm):
     """
     The QLearning algorithm is implemented by inheriting the base class of stable_baselines3 
-    to ensure consistent logging format.
+    to ensure consistent logging format. Uses AnyMDPSolverQ methods for Q-learning.
     """
-    
+
     def __init__(
         self,
         env: GymEnv,
-        learning_rate: Union[float, Schedule] = 0.1,
-        discount_factor: float = 0.99,
-        epsilon: float = 0.1,
-        epsilon_decay: float = 0.995,
-        min_epsilon: float = 0.01,
+        gamma: float = 0.99,
+        alpha: float = 0.01,
+        c: float = 0.01,
+        max_steps: int = 4000,
         tensorboard_log: Optional[str] = None,
         verbose: int = 0,
         _init_setup_model: bool = True,
@@ -31,31 +32,18 @@ class QLearning(BaseAlgorithm):
         assert isinstance(env.observation_space, spaces.Discrete), "Requires a discrete state space."
         assert isinstance(env.action_space, spaces.Discrete), "Requires a discrete action space."
 
-        # Initialize learning rate scheduler 
-        self.lr_schedule = get_schedule_fn(learning_rate)
-        
+        # Initialize AnyMDPSolverQ
+        self.solver = AnyMDPSolverQ(env, gamma=gamma, alpha=alpha, c=c, max_steps=max_steps)
+
         # Call base class init
         super().__init__(
             policy=None,
             env=env,
-            learning_rate=1.0,  # Virtual value, the actual use of custom scheduling
+            learning_rate=1.0,  # Virtual value, the actual learning rate is managed by AnyMDPSolverQ
             tensorboard_log=tensorboard_log,
             verbose=verbose,
             supported_action_spaces=(spaces.Discrete,),
             support_multi_env=False,
-        )
-
-        # Q-Learning parameters
-        self.discount_factor = discount_factor
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.min_epsilon = min_epsilon
-
-        # Q table initialization
-        self.q_table = numpy.zeros(
-            (self.env.observation_space.n, 
-             self.env.action_space.n),
-            dtype=numpy.float32
         )
 
         if _init_setup_model:
@@ -72,12 +60,9 @@ class QLearning(BaseAlgorithm):
         episode_start: Optional[numpy.ndarray] = None,
         deterministic: bool = False,
     ) -> Tuple[numpy.ndarray, Optional[Tuple]]:
-        """epsilon-greedy policy"""
+        """Policy based on AnyMDPSolverQ"""
         state_idx = observation.item()
-        if deterministic or numpy.random.rand() >= self.epsilon:
-            action = numpy.argmax(self.q_table[state_idx])
-        else:
-            action = self.env.action_space.sample()
+        action = self.solver.policy(state_idx)  # Use AnyMDPSolverQ's policy method
         return numpy.array([action], dtype=numpy.int64), state
 
     def learn(
@@ -101,9 +86,6 @@ class QLearning(BaseAlgorithm):
         episode_reward = 0.0
 
         while self.num_timesteps < total_timesteps:
-            # Get learning rate
-            current_lr = self.lr_schedule(self._current_progress_remaining)
-            
             # Action choose and execute
             action, _ = self.predict(state)
             next_state, reward, terminated, truncated, *_ = self.env.step(action)
@@ -117,10 +99,8 @@ class QLearning(BaseAlgorithm):
             action_idx = action.item()
             next_state_idx = next_state.item()
 
-            # Q table update
-            best_next_q = numpy.max(self.q_table[next_state_idx])
-            td_target = reward + self.discount_factor * best_next_q
-            self.q_table[state_idx, action_idx] += current_lr * (td_target - self.q_table[state_idx, action_idx])
+            # Update solver with learner method
+            self.solver.learner(state_idx, action_idx, next_state_idx, reward, terminated, truncated)
 
             # Fill callback
             callback.locals = {
@@ -138,9 +118,7 @@ class QLearning(BaseAlgorithm):
 
             if done:
                 self.logger.record("train/episode_reward", episode_reward)
-                self.logger.record("train/epsilon", self.epsilon)
                 episode_reward = 0.0
-                self.epsilon = max(self.epsilon * self.epsilon_decay, self.min_epsilon)
 
         callback.on_training_end()
         return self
@@ -148,21 +126,24 @@ class QLearning(BaseAlgorithm):
     def save(self, path: str) -> None:
         numpy.savez_compressed(
             f"{path}.npz",
-            q_table=self.q_table,
-            epsilon=self.epsilon,
-            discount_factor=self.discount_factor,
-            learning_rate=self.lr_schedule(1.0),
+            value_matrix=self.solver.value_matrix,
+            sa_visited=self.solver.sa_vistied,
+            gamma=self.solver.gamma,
+            alpha=self.solver.alpha,
+            c=self.solver._c,
         )
 
     @classmethod
     def load(cls, path: str, env: GymEnv, **kwargs) -> "QLearning":
         data = numpy.load(f"{path}.npz")
         model = cls(env=env, **kwargs)
-        model.q_table = data["q_table"]
-        model.epsilon = float(data["epsilon"])
-        model.discount_factor = float(data["discount_factor"])
-        model.lr_schedule = get_schedule_fn(float(data["learning_rate"]))
+        model.solver.value_matrix = data["value_matrix"]
+        model.solver.sa_vistied = data["sa_visited"]
+        model.solver.gamma = float(data["gamma"])
+        model.solver.alpha = float(data["alpha"])
+        model.solver._c = float(data["c"])
         return model
+
 
 class RolloutLogger(BaseCallback):
     """
@@ -270,7 +251,7 @@ class OnlineRL:
         self.log_callback = RolloutLogger(env_name, max_trails, max_steps, downsample_trail, verbose=1)
         
     def create_model(self):
-        model_classes = {'a2c': A2C, 'ppo': PPO, 'dqn': DQN, 'td3': TD3, 'qlearning': QLearning}
+        model_classes = {'a2c': A2C, 'ppo': PPO, 'dqn': DQN, 'td3': TD3, 'qlearning': QLearning, 'CQL': CQL}
         if self.model_name not in model_classes:
             raise ValueError("Unknown policy type: {}".format(self.model_name))
         
@@ -294,6 +275,8 @@ class OnlineRL:
         elif self.model_name.lower() == 'qlearning':
             self.model = QLearning(env=self.env, learning_rate=0.7, discount_factor=0.95,
                                    epsilon=1.0, epsilon_decay=0.999, min_epsilon=0.01, verbose=1)
+        elif self.model_name.lower() == 'cql':
+            self.model = CQL(env=self.env, gamma=0.99, alpha=1.0, lr=3e-4, buffer_capacity=100000, batch_size= 64, tau=0.005)
 
     def __call__(self):
         self.create_model()
@@ -319,7 +302,7 @@ class LoadRLModel:
                 return model.policy(state)
             self.benchmark_opt_model = benchmark_model
         elif any(self.env_name.find(name) == 0 for name in self.supported_gym_env):
-            model_classes = {'dqn': DQN, 'a24': A2C, 'td3': TD3, 'ppo': PPO}
+            model_classes = {'dqn': DQN, 'a24': A2C, 'td3': TD3, 'ppo': PPO, 'qlearning': QLearning, 'CQL': CQL}
             if self.model_name not in model_classes:
                 raise ValueError("Unknown policy type: {}".format())
             model = model_classes[self.model_name].load(f'{self.model_path}/model/{self.model_name}.zip', env=self.env)
