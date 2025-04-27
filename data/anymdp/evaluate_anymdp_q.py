@@ -5,79 +5,55 @@ import multiprocessing
 import argparse
 import numpy
 
+from copy import deepcopy
 from xenoverse.anymdp import AnyMDPTaskSampler
 from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverMBRL, AnyMDPSolverQ
+from xenoverse.anymdp.test_utils import train
 from xenoverse.utils import pseudo_random_seed
 
-# for comparison
-def resample_task(task):
-    task["transition"] = numpy.clip(numpy.random.normal(size=task["transition"].shape), 0.0, None)
-    task["transition"] = task["transition"] / numpy.sum(task["transition"], axis=-1, keepdims=True)
-    task["reward"] = numpy.random.normal(size=task["reward"].shape)
-    return task
+sub_sample=100
 
-def test_AnyMDP_task(worker_id, result, ns=16, na=5, 
-                     max_epochs_rnd=200, max_epochs_q=5000, 
-                     sub_sample=100, gamma=0.9,
-                     exploration=0.005, lr=0.01):
+# for comparison
+def resample_task(task, t=True, r=True):
+    new_task = deepcopy(task)
+    if(t):
+        new_task["transition"] = numpy.clip(numpy.random.normal(size=task["transition"].shape), 0.0, None)
+        new_task["transition"] = new_task["transition"] / numpy.sum(new_task["transition"], axis=-1, keepdims=True)
+    if(r):
+        new_task["reward"] = numpy.random.normal(size=task["reward"].shape)
+    return new_task
+
+def test_AnyMDP_task(worker_id, 
+                     result, 
+                     ns, 
+                     na, 
+                     max_epochs):
+    gamma=0.99
+    lr=0.20
+
     env = gym.make("anymdp-v0")
     task = AnyMDPTaskSampler(ns, na, verbose=True)
-    #task = resample_task(task)
     env.set_task(task)
-    epoch_rews_rnd = []
-    epoch_rews_opt = []
-    epoch_rews_q =[]
-    epoch_steps_q = []
 
-    for epoch in range(max_epochs_rnd):
-        obs, info = env.reset()
-        epoch_rew = 0
-        terminated, truncated = False, False
-        while not terminated and not truncated:
-            act = env.action_space.sample()
-            obs, rew, terminated, truncated, info = env.step(act)
-            epoch_rew += rew
-        epoch_rews_rnd.append(epoch_rew)
+    opt_score, _, opt_steps = train(env, max_epochs=200, gamma=0.99, solver_type='opt')
+    rnd_score, _, rnd_steps = train(env, max_epochs=200, gamma=0.99, solver_type='random')
 
-    solver_opt = AnyMDPSolverOpt(env, gamma=0.98)
-    for epoch in range(max_epochs_rnd):
-        obs, info = env.reset()
-        epoch_rew = 0
-        terminated, truncated = False, False
-        while not terminated and not truncated:
-            act = solver_opt.policy(obs)
-            obs, rew, terminated, truncated, info = env.step(act)
-            epoch_rew += rew
-        epoch_rews_opt.append(epoch_rew)
+    opt_score= numpy.mean(opt_score)
+    rnd_score= numpy.mean(rnd_score)
 
-    rnd_perf = numpy.mean(epoch_rews_rnd)
-    opt_perf = numpy.mean(epoch_rews_opt)
-    if(opt_perf - rnd_perf < 0.01):
+    if(opt_score - rnd_score < 0.01):
         print("[Trivial task], skip")
         return
+    
+    def normalize(score):
+        return numpy.clip((score - rnd_score) / (opt_score - rnd_score), 0.0, 1.0)
+    
+    q_train_score, q_test_score, q_steps = train(env, max_epochs=max_epochs, gamma=gamma, solver_type='q', lr=lr, test_interval=sub_sample)
+    #q_train_score = normalize(q_train_score)
+    q_test_score = normalize(q_test_score)
+    q_steps = numpy.cumsum(q_steps) * sub_sample
 
-    solver_q = AnyMDPSolverQ(env, gamma=gamma, c=exploration, alpha=lr)
-    for epoch in range(max_epochs_q):
-        last_obs, info = env.reset()
-        epoch_rew = 0
-        epoch_step = 0
-        terminated, truncated = False, False
-        while not terminated and not truncated:
-            act = solver_q.policy(last_obs)
-            obs, rew, terminated, truncated, info = env.step(act)
-            solver_q.learner(last_obs, act, obs, rew, terminated, truncated)
-            epoch_rew += rew
-            epoch_step += 1
-            last_obs = obs
-        epoch_rews_q.append(epoch_rew)
-        epoch_steps_q.append(epoch_step)
-
-    normalized_q = numpy.clip((numpy.array(epoch_rews_q) - rnd_perf) / max(1.0e-2, opt_perf - rnd_perf), 0.0, 1.0)
-    steps = normalized_q.shape[0] // sub_sample
-    eff_size = steps * sub_sample
-    normalized_q = numpy.reshape(normalized_q[:eff_size], (-1, sub_sample))
-    normalized_steps = numpy.reshape(numpy.array(epoch_steps_q)[:eff_size], (-1, sub_sample))
-    result.put((numpy.mean(normalized_q, axis=-1), numpy.cumsum(numpy.sum(normalized_steps, axis=-1)), opt_perf - rnd_perf))
+    result.put((q_test_score, q_steps, opt_score - rnd_score))
     print(f"finish task： {worker_id}")
             
 if __name__=="__main__":
@@ -87,11 +63,7 @@ if __name__=="__main__":
     parser.add_argument("--state_num", type=int, default=16, help="state num, default:16")
     parser.add_argument("--action_num", type=int, default=5, help="action num, default:5")
     parser.add_argument("--max_epochs", type=int, default=10000, help="multiple epochs:default:10000")
-    parser.add_argument("--max_epochs", type=int, default=2000, help="multiple epochs:default:1000")
     parser.add_argument("--workers", type=int, default=4, help="number of multiprocessing workers")
-    parser.add_argument("--sub_sample", type=int, default=10)
-    parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--exploration", type=float, default=0.005)
     parser.add_argument("--learning_rate", type=float, default=0.01)
 
     args = parser.parse_args()
@@ -105,12 +77,7 @@ if __name__=="__main__":
                       res,
                       int(args.state_num), 
                       int(args.action_num),
-                      200, 
-                      args.max_epochs, 
-                      args.sub_sample,
-                      args.gamma,
-                      args.exploration,
-                      args.learning_rate))
+                      args.max_epochs))
         processes.append(process)
         process.start()
 
@@ -146,5 +113,5 @@ if __name__=="__main__":
     fout = open(args.output_path, "w")
     for i in range(s_mean.shape[0]):
         fout.write("%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n" % 
-              ((i+1)*args.sub_sample, s_mean[i], conf[i], sp_mean[i], pstd[i], d_mean, dstd))
+              ((i+1)*sub_sample, s_mean[i], conf[i], sp_mean[i], pstd[i], d_mean, dstd))
     fout.close()
