@@ -8,7 +8,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from xenoverse.anymdp import AnyMDPTaskSampler
-from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
+from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverQ
 from xenoverse.utils import pseudo_random_seed
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv

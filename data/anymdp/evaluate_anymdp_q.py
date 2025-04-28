@@ -33,10 +33,11 @@ def test_AnyMDP_task(worker_id,
 
     env = gym.make("anymdp-v0")
     task = AnyMDPTaskSampler(ns, na, verbose=True)
+    #task = resample_task(task)
     env.set_task(task)
 
-    opt_score, _, opt_steps = train(env, max_epochs=200, gamma=0.99, solver_type='opt')
-    rnd_score, _, rnd_steps = train(env, max_epochs=200, gamma=0.99, solver_type='random')
+    opt_score, _, opt_steps = train(env, max_epochs=200, gamma=gamma, solver_type='opt')
+    rnd_score, _, rnd_steps = train(env, max_epochs=200, gamma=gamma, solver_type='random')
 
     opt_score= numpy.mean(opt_score)
     rnd_score= numpy.mean(rnd_score)
