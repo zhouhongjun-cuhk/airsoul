@@ -206,7 +206,7 @@ class OmniRL(POTARDecisionModel):
         if(not self.p_included):
             pro_in = None
         elif(not isinstance(prompt, torch.Tensor)):
-            pro_in = torch.tensor([prompt], dtype=torch.int64).to(device)
+            pro_in = torch.tensor([prompt], dtype=torch.float32).to(device)
         else:
             pro_in = prompt.to(device)
         
