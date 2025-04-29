@@ -16,7 +16,8 @@ class ModelLoader:
 
         # Initialize distributed process group for DDP
         os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = '12355'  # Arbitrary port
+        # Arbitrary port
+        os.environ['MASTER_PORT'] = '12355'
         if self.use_gpu:
             dist.init_process_group("nccl", rank=self.rank, world_size=self.world_size)
         else:
