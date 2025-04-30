@@ -312,7 +312,8 @@ class OmniRLGenerator(GeneratorBase):
 
     def task_sampler_darkroom(self, epoch_id=0):
         state_space_dim, _ = self.extract_state_space_dimensions(self.config.env.lower(), "darkroom")
-        self.env = DarkroomEnv(state_space_dim,self.config.max_steps)
+        goal = numpy.array([state_space_dim - 1, state_space_dim - 1])
+        self.env = DarkroomEnv(state_space_dim,self.config.max_steps, goal=goal)
         return None
 
     def reward_shaping(self, done, terminated, reward):
@@ -576,7 +577,12 @@ class OmniRLGenerator(GeneratorBase):
                                  max_trails=self.config.max_trails,
                                  max_steps=self.config.max_steps,
                                  downsample_trail=self.config.downsample_trail)
-            rew_stat, step_trail, success_rate = online_rl()
+            if self.config.benchmark_model_name.lower() == "cql" and  self.config.learn_from_data:
+                rew_stat, step_trail, success_rate = online_rl(offline_learning=True, 
+                                                               offline_learning_path = self.config.data_root,
+                                                               episode_end_prompt = 7)
+            else:
+                rew_stat, step_trail, success_rate = online_rl()
             ds_step_trail = downsample(step_trail, self.config.downsample_trail)
             ds_rewards = downsample(rew_stat, self.config.downsample_trail)
             ds_success = downsample(success_rate, self.config.downsample_trail)

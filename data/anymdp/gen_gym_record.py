@@ -69,7 +69,8 @@ def create_env(args):
         return env
     elif(args.env_name.lower().find("darkroom") >= 0):
         state_space_dim, _ = extract_state_space_dimensions(args.env_name.lower(), "darkroom")
-        env = DarkroomEnv(state_space_dim, args.n_max_steps)
+        goal = np.array([state_space_dim - 1, state_space_dim - 1])
+        env = DarkroomEnv(state_space_dim, args.n_max_steps, goal=goal)
         return env
     else:
         raise ValueError("Unknown env name: {}".format(args.env_name))

@@ -1,3 +1,4 @@
+import os
 import numpy
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import A2C, PPO, DQN, TD3
@@ -251,7 +252,7 @@ class OnlineRL:
         self.log_callback = RolloutLogger(env_name, max_trails, max_steps, downsample_trail, verbose=1)
         
     def create_model(self):
-        model_classes = {'a2c': A2C, 'ppo': PPO, 'dqn': DQN, 'td3': TD3, 'qlearning': QLearning, 'CQL': CQL}
+        model_classes = {'a2c': A2C, 'ppo': PPO, 'dqn': DQN, 'td3': TD3, 'qlearning': QLearning, 'cql': CQL}
         if self.model_name not in model_classes:
             raise ValueError("Unknown policy type: {}".format(self.model_name))
         
@@ -278,8 +279,62 @@ class OnlineRL:
         elif self.model_name.lower() == 'cql':
             self.model = CQL(env=self.env, gamma=0.99, alpha=1.0, lr=3e-4, buffer_capacity=100000, batch_size= 64, tau=0.005)
 
-    def __call__(self):
+    def offline_learning(self, offline_learning_path, episode_end_prompt = 7):
+        states = numpy.load(os.path.join(offline_learning_path, 'observations.npy'))
+        prompts = numpy.load(os.path.join(offline_learning_path, 'prompts.npy'))
+        actions = numpy.load(os.path.join(offline_learning_path, 'actions_behavior.npy'))
+        rewards = numpy.load(os.path.join(offline_learning_path, 'rewards.npy'))
+
+        states = states.astype(numpy.int32)
+        prompts = prompts.astype(numpy.int32)
+        actions = actions.astype(numpy.int32)
+        rewards = rewards.astype(numpy.float32)
+
+        assert len(states) == len(actions), "Length of states mismatch."
+
+        end_indices = numpy.where(prompts == episode_end_prompt)[0]
+        valid_mask = numpy.ones(len(actions), dtype=bool)
+        dones = numpy.zeros(len(actions), dtype=bool)
+        for end_idx in end_indices:
+            if end_idx > 0:
+                dones[end_idx-1] = True
+                if end_idx < len(actions):
+                    valid_mask[end_idx] = False
+        current_states = states[valid_mask]
+        next_states = states[1:][valid_mask[:-1]]
+        actions = actions[valid_mask]
+        rewards = rewards[valid_mask]
+        dones = dones[valid_mask]
+
+        valid_length = len(next_states)
+        current_states = current_states[:valid_length]
+        actions = actions[:valid_length]
+        rewards = rewards[:valid_length]
+        dones = dones[:valid_length]
+
+        assert len(current_states) == len(actions) == len(rewards) == len(next_states) == len(dones), \
+        "Processed data length mismatch"
+
+        buffer_capacity = self.model.replay_buffer.capacity
+        batch_size = self.model.batch_size
+        epoch_num = 100
+        if current_states.shape[0] > buffer_capacity:
+            current_states = current_states[:buffer_capacity]
+            actions = actions[:buffer_capacity]
+            rewards = rewards[:buffer_capacity]
+            next_states = next_states[:buffer_capacity]
+            dones = dones[:buffer_capacity]
+        steps_per_epoch = (len(current_states) + batch_size - 1) // batch_size
+        total_steps = steps_per_epoch * epoch_num
+
+        self.model.add_demo_data(current_states, actions, rewards, next_states, dones)
+        self.model.offline_learn(total_steps=total_steps)
+
+    
+    def __call__(self, offline_learning = False, offline_learning_path = None, episode_end_prompt = 7):
         self.create_model()
+        if offline_learning:
+            self.offline_learning(offline_learning_path, episode_end_prompt=episode_end_prompt)
         self.model.learn(total_timesteps=int(1e6), callback=self.log_callback)
         return (self.log_callback.reward_sums, 
                 self.log_callback.step_counts, 
@@ -302,7 +357,7 @@ class LoadRLModel:
                 return model.policy(state)
             self.benchmark_opt_model = benchmark_model
         elif any(self.env_name.find(name) == 0 for name in self.supported_gym_env):
-            model_classes = {'dqn': DQN, 'a24': A2C, 'td3': TD3, 'ppo': PPO, 'qlearning': QLearning, 'CQL': CQL}
+            model_classes = {'dqn': DQN, 'a2c': A2C, 'td3': TD3, 'ppo': PPO, 'qlearning': QLearning, 'cql': CQL}
             if self.model_name not in model_classes:
                 raise ValueError("Unknown policy type: {}".format())
             model = model_classes[self.model_name].load(f'{self.model_path}/model/{self.model_name}.zip', env=self.env)

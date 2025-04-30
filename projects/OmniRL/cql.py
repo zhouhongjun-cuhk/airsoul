@@ -46,6 +46,14 @@ class ReplayBuffer:
         self.buffer[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
+    def add_batch(self, states, actions, rewards, next_states, dones):
+        """ Batch add transitions to buffer """
+        assert len(states) == len(actions) == len(rewards) == len(next_states) == len(dones), \
+            "All input arrays must have same length"
+        
+        for s, a, r, ns, d in zip(states, actions, rewards, next_states, dones):
+            self.push(s, a, r, ns, d)
+
     def sample(self, batch_size: int):
         batch = np.random.choice(len(self.buffer), batch_size, replace=False)
         states, actions, rewards, next_states, dones = zip(*[self.buffer[idx] for idx in batch])
@@ -97,6 +105,11 @@ class Normalizer:
         self.sum += state
         self.sum_sq += state ** 2
         self.count += 1
+
+    def batch_update(self, states: np.ndarray):
+        self.sum += states.sum(axis=0)
+        self.sum_sq += (states ** 2).sum(axis=0)
+        self.count += states.shape[0]
 
     @property
     def mean(self):
@@ -244,19 +257,21 @@ class CQL(BaseAlgorithm):
         return self
 
     def add_demo_data(self, states, actions, rewards, next_states, dones):
-        # 更新状态处理器统计量
-        for s, ns in zip(states, next_states):
-            self.state_processor.update(s)
-            self.state_processor.update(ns)
+        if isinstance(self.state_processor.state_space, spaces.Box):
+            self.state_processor.normalizer.batch_update(states) 
         
         self.replay_buffer.add_batch(states, actions, rewards, next_states, dones)
 
     def offline_learn(self, total_steps: int):
+        update_freq = 100
+        step_counter = 0
         for step in range(1, total_steps+1):
             if len(self.replay_buffer) >= self.batch_size:
                 batch = self.replay_buffer.sample(self.batch_size)
                 loss = self._update_network(batch)
-                self._soft_update_target()
+                step_counter += 1
+                if step_counter % update_freq == 0:
+                    self._soft_update_target()
 
 
     def _update_network(self, batch):
@@ -287,8 +302,9 @@ class CQL(BaseAlgorithm):
         # CQL regular terms
         q_values = self.q_network(states)
         logsumexp = torch.logsumexp(q_values / self.alpha, dim=1)
-        mean_q = q_values.mean(dim=1)
-        conservative_loss = (logsumexp - mean_q).mean()
+        policy_probs = F.softmax(q_values.detach(), dim=1)
+        policy_q = (q_values * policy_probs).sum(dim=1)
+        conservative_loss = (logsumexp - policy_q).mean()
 
         mse_loss = F.mse_loss(current_q, target_q.detach())
         total_loss = mse_loss + self.alpha * conservative_loss
