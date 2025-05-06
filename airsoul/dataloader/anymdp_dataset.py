@@ -19,6 +19,7 @@ class AnyMDPDataSetBase(Dataset):
             file_list = os.listdir(d)
             self.file_list.extend([os.path.join(d, file) for file in file_list])
             
+        random.shuffle(self.file_list)
         self.time_step = time_step
 
         if(verbose):
@@ -91,7 +92,7 @@ class AnyMDPv2DataSet(AnyMDPDataSetBase):
             return None
 
         obs_arr = torch.from_numpy(data[0]).float()
-        pro_arr = torch.from_numpy(data[1].astype("int32")).long() 
+        pro_arr = torch.from_numpy(data[1]).float() 
         tag_arr = torch.from_numpy(data[2].astype("int32")).long() 
         bact_arr = torch.from_numpy(data[3]).float()
         rwd_arr = torch.from_numpy(data[4]).float()
