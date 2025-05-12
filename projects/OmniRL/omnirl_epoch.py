@@ -183,7 +183,7 @@ class OmniRLGenerator(GeneratorBase):
         elif(self.config.env.lower().find("cliff") >= 0):
             self.task_sampler = self.task_sampler_cliff
         elif(self.config.env.lower().find("anymdp") >= 0):
-            self.env = gym.make("anymdp-v0", max_steps=self.max_steps)
+            self.env = gymnasium.make("anymdp-v0", max_steps=self.max_steps)
             self.task_sampler = self.task_sampler_anymdp
             if self.config.mult_anymdp_task:
                 self.mult_anymdp_task = True
@@ -614,11 +614,8 @@ class OmniRLGenerator(GeneratorBase):
                 while not done:
                     action= benchmark_model(new_state)
                     new_state, new_reward, terminated, truncated, *_ = self.env.step(action)
-                    if self.config.env.lower().find("anymdp") >= 0:
-                        done = terminated
-                    else:
-                        if terminated or truncated:
-                            done = True
+                    if terminated or truncated:
+                        done = True
                     shaped_reward = self.reward_shaping(done, terminated, new_reward)
                     trail_reward += new_reward
 
@@ -724,7 +721,7 @@ class OmniRLGenerator(GeneratorBase):
 
         if self.mult_anymdp_task:
             skip_task = not self.nomalize_anymdp_reward(task_id)
-            self.get_exp_q()
+            # self.get_exp_q()
             if skip_task:
                 print("Skip task: ", task_id)
                 return

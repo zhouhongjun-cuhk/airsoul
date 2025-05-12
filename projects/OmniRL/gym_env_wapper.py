@@ -443,7 +443,7 @@ class DarkroomEnv(BaseEnv):
         if numpy.all(state == self.goal):
             reward = 1
         else:
-            reward = - 0.1
+            reward = - 0.01
         return state, reward
 
     def step(self, action):
