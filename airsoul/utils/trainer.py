@@ -134,6 +134,7 @@ def EpochManager(cls):
                 return
             
             acc_iter = 0
+            acc_iter_log = 0
 
             if(not hasattr(self.computer, 'compute')):
                 log_fatal("The computer object must have compute method.")
@@ -144,6 +145,7 @@ def EpochManager(cls):
             data_length = len(self.dataloader)
             for batch_id, batch_data in enumerate(self.dataloader):
                 acc_iter += 1
+                acc_iter_log += 1
 
                 # Important: Must reset the model before segment iteration
                 self.model.module.reset()
@@ -183,12 +185,9 @@ def EpochManager(cls):
                         check_model_validity(self.model.module)
                         save_model_path = model_path(self.config.save_model_path, epoch_id)
                         torch.save(self.model.state_dict(), save_model_path)
-                        # Save learning rate.
-                        current_lr = self.optimizer.param_groups[0]['lr']
-                        lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}_iter_{acc_iter}.txt")
-                        with open(lr_file_path, 'w') as f:
-                            f.write(f"epoch: {epoch_id}, iteration: {acc_iter}, learning_rate: {current_lr:.6f}")
-                        log_debug(f"Saved checkpoint to {save_model_path} and learning rate {current_lr:.6f} to {lr_file_path}", on=self.main)
+                        # Save additional iter-based model file.
+                        iter_model_path = os.path.join(self.config.save_model_path, f"model-{acc_iter_log}.pth")
+                        torch.save(self.model.state_dict(), iter_model_path)
                     need_break = True
 
                 if(not self.is_training):
