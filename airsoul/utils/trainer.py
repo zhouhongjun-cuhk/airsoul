@@ -179,21 +179,20 @@ def EpochManager(cls):
                 if(self.is_training and self.config.has_attr("max_save_iterations") 
                                 and acc_iter > self.config.max_save_iterations 
                                 and self.config.max_save_iterations > 0):
-
+                    acc_iter = 0
                     log_debug("-"*40, "Check current validity and save model for safe...", on=self.main)
                     if(self.main):
-                        acc_iter = 0
                         check_model_validity(self.model.module)
                         save_model_path = model_path(self.config.save_model_path, epoch_id)
                         torch.save(self.model.state_dict(), save_model_path)
                         # Save additional iter-based model file
-                        iter_model_path = os.path.join(self.config.save_model_path, f"{acc_iter_log}-model.pth")
+                        iter_model_path = os.path.join(self.config.save_model_path, f"model-{acc_iter_log}.pth")
                         torch.save(self.model.state_dict(), iter_model_path)
                         # Save learning rate.
                         current_lr = self.optimizer.param_groups[0]['lr']
-                        lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}_iter_{acc_iter}.txt")
+                        lr_file_path = os.path.join(os.path.dirname(save_model_path), "learning_rate.txt")
                         with open(lr_file_path, 'w') as f:
-                            f.write(f"epoch: {epoch_id}, iteration: {acc_iter_log}, learning_rate: {current_lr:.6f}")
+                            f.write(f"learning_rate: {current_lr:.6f}")
                         log_debug(f"Saved checkpoint to {save_model_path} and learning rate {current_lr:.6f} to {lr_file_path}", on=self.main)
                     need_break = True
 
@@ -207,9 +206,6 @@ def EpochManager(cls):
                 check_model_validity(self.model.module)
                 save_model_path = model_path(self.config.save_model_path, epoch_id)
                 torch.save(self.model.state_dict(), save_model_path)
-                # Save additional iter-based model file
-                iter_model_path = os.path.join(self.config.save_model_path, f"{acc_iter}-model.pth")
-                torch.save(self.model.state_dict(), iter_model_path)
                 current_lr = self.optimizer.param_groups[0]['lr']
                 lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}.txt")
                 with open(lr_file_path, 'w') as f:
