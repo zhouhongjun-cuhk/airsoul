@@ -136,14 +136,7 @@ class OmniRL(POTARDecisionModel):
                 reduce_dim=reduce_dim,
                 need_cnt=True)
 
-        if(0):
-            loss["wm-r"] = weighted_loss(r_pred,
-                                         gt=rewards.view(*rewards.shape,1),
-                                         loss_type="mse",
-                                         loss_wht=loss_weight_a,
-                                         reduce_dim=reduce_dim)
-        else:
-            loss["wm-r"] = 0
+        loss["wm-r"] = 0
 
         # Policy Model
         if self.action_dtype == "Discrete":
