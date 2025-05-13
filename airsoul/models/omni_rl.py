@@ -127,12 +127,23 @@ class OmniRL(POTARDecisionModel):
                                         loss_wht=loss_weight_s, 
                                         reduce_dim=reduce_dim,
                                         need_cnt=True)
-                
-        loss["wm-r"] = weighted_loss(r_pred, 
-                                     gt=rewards.view(*rewards.shape,1), 
-                                     loss_type="mse",
-                                     loss_wht=loss_weight_a,
-                                     reduce_dim=reduce_dim)
+
+        elif self.state_dtype == "Continuous" and not self.config.state_diffusion.enable:
+            loss["wm-s"], loss["count_s"] = weighted_loss(s_pred,
+                loss_type="mse",
+                gt=observations[:, 1:],
+                loss_wht=loss_weight_s,
+                reduce_dim=reduce_dim,
+                need_cnt=True)
+
+        if(0):
+            loss["wm-r"] = weighted_loss(r_pred,
+                                         gt=rewards.view(*rewards.shape,1),
+                                         loss_type="mse",
+                                         loss_wht=loss_weight_a,
+                                         reduce_dim=reduce_dim)
+        else:
+            loss["wm-r"] = 0
 
         # Policy Model
         if self.action_dtype == "Discrete":
@@ -168,6 +179,14 @@ class OmniRL(POTARDecisionModel):
                                        loss_wht=loss_weight_a, 
                                        reduce_dim=reduce_dim,
                                        need_cnt=True)
+
+        elif self.action_dtype == "Continuous" and not self.config.action_diffusion.enable:
+            loss["pm"], loss["count_a"] = weighted_loss(a_pred,
+                loss_type="mse",
+                gt=label_actions,
+                loss_wht=loss_weight_a,
+                reduce_dim=reduce_dim,
+                need_cnt=True)
         # Entropy Loss
         if self.action_dtype == "Discrete" :
             loss["ent"] = weighted_loss(a_pred, 
