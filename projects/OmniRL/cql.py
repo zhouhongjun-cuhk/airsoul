@@ -182,8 +182,8 @@ class CQL(BaseAlgorithm):
     def _preprocess_state(self, state: np.ndarray) -> torch.Tensor:
         processed = self.state_processor.process(state)
         if isinstance(self.env.observation_space, spaces.Discrete):
-            return torch.as_tensor(processed, dtype=torch.long)  # 明确指定long类型
-        return torch.as_tensor(processed, dtype=torch.float32)  # 明确指定float类型
+            return torch.as_tensor(processed, dtype=torch.long) 
+        return torch.as_tensor(processed, dtype=torch.float32)  
 
     def predict(
         self,
@@ -291,7 +291,6 @@ class CQL(BaseAlgorithm):
         rewards = torch.FloatTensor(rewards).view(-1)
         dones = torch.FloatTensor(dones).view(-1)
 
-        # 目标Q值计算
         with torch.no_grad():
             next_q = self.target_q_network(next_states)
             max_next_q = torch.max(next_q, dim=1)[0].view(-1)

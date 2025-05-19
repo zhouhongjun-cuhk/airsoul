@@ -92,10 +92,10 @@ def run_epoch(
                      (solveropt1, 0.02),    #opt1, 1
                      (solveropt2, 0.03),    #opt2, 2
                      (solveropt3, 0.05)]    #opt3, 3
-    reference_dict = [(solveropt0, 0.10),   #opt0, 0
-                      (solveropt1, 0.10),   #opt1, 1
-                      (solveropt2, 0.20),   #opt2, 2
-                      (solveropt3, 0.60)]   #opt3, 3
+    reference_dict = [(solveropt0, 0.0),   #opt0, 0
+                      (solveropt1, 0.0),   #opt1, 1
+                      (solveropt2, 0.0),   #opt2, 2
+                      (solveropt3, 1.0)]   #opt3, 3
     
     # Check opt avg reward > random avg reward
     if task_from_file is None:
