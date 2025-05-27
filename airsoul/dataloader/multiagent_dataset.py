@@ -145,6 +145,7 @@ class MultiAgentDataSet(Dataset):
                 n_e = self.time_step
 
             sequences = []
+            label_action_seqs = []
             for agent_id in range(num_agent):
                 relevant_obs = np.where(obs_matrix[:, agent_id] == 1)[0]
                 connected_agents = np.where(agent_matrix[agent_id] == 1)[0]
@@ -174,9 +175,11 @@ class MultiAgentDataSet(Dataset):
                         time_step_seq.append(self.vocabularize('special_token', 'idx_reset_env'))
                     agent_sequence.append(time_step_seq)
 
-                sequences.append(np.concatenate(agent_sequence))                        
+                sequences.append(np.concatenate(agent_sequence))
+                label_action_seqs.append(actions_label[agent_id][n_b:n_e])
+                # TODO, len(agent_sequence) >> len(actions_label)            
 
-            return sequences
+            return (sequences, label_action_seqs)
         except Exception as e:
             print(f"Unexpected reading error founded when loading {path}: {e}")
             return (None,) * 6
