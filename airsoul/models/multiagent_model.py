@@ -77,6 +77,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
 
         self.nobs = config.nobs
         self.nother_agent = config.nother_agent
+        self.default_tag = int(config.default_tag)
 
         if(verbose):
             log_debug("RSA Decision Model initialized, total params: {}".format(count_parameters(self)))
@@ -100,7 +101,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
         policy_mask = (inputs == (nobs + nother_agent))
         reward_mask = (inputs == (nobs + nother_agent + 3))
 
-        return ~world_model_obs_mask, ~world_model_action_mask, ~policy_mask, ~reward_mask
+        return world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask
 
     def sequential_loss(self, inputs, label_actions, use_loss_weight=True, update_memory=True, reduce_dim=1):
         """
@@ -114,8 +115,8 @@ class OmniRL_MultiAgent(MultiAgentModel):
                     f" than sequence length {pe}")
 
         outputs, _ = self.forward(inputs, need_cache=False, update_memory=update_memory) #outputs: [batch_size, seq_len, vocab_size]
-
-        world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask = self.find_position(inputs)
+        outputs = outputs[:, :-1, :]
+        world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask = self.find_position(inputs[:,:-1])
     
         
         loss_weight_wm_obs = world_model_obs_mask
@@ -201,15 +202,15 @@ class OmniRL_MultiAgent(MultiAgentModel):
         if not reward_prediction:
             return world_model_obs, world_model_action, action
         else:
-            new_value = [self.nobs + self.nother_agent + 1, self.default_tag, 
-                         self.nobs + self.nother_agent + 2, int(action),
-                         self.nobs + self.nother_agent + 3]
+            new_value = [self.nobs + self.nother_agent + 1, self.default_tag, # idx_tag, tag
+                         self.nobs + self.nother_agent + 2, int(action.item()), # idx_a_self, a_self
+                         self.nobs + self.nother_agent + 3] # idx_reward
             for i, v in enumerate(new_value):
                 assert isinstance(v, int), f"element{i} type error: {type(v)} should be int."
             new_inputs = torch.cat((inputs, torch.tensor(new_value, dtype=torch.int64, device=inputs.device).unsqueeze(0)), dim=1)
             outputs, _ = self.forward(new_inputs, need_cache=False, update_memory=False)
             outputs = get_value(outputs)
-            _, _, _, reward_mask = self.find_position(inputs)
+            _, _, _, reward_mask = self.find_position(new_inputs)
             world_model_reward = outputs[reward_mask].detach().cpu().squeeze()
             if need_numpy:
                 world_model_reward = world_model_reward.numpy()
