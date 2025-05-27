@@ -7,6 +7,7 @@ from airsoul.utils import format_cache
 from airsoul.utils import weighted_loss
 from airsoul.utils import count_parameters
 from airsoul.utils import Logger, log_progress, log_debug, log_warn, log_fatal
+from airsoul.utils import parameters_regularization, count_parameters
 
 class MultiAgentModel(nn.Module):
     '''
@@ -77,6 +78,10 @@ class OmniRL_MultiAgent(MultiAgentModel):
         self.nobs = config.nobs
         self.nother_agent = config.nother_agent
 
+        if(verbose):
+            log_debug("RSA Decision Model initialized, total params: {}".format(count_parameters(self)))
+            log_debug("Causal Block Parameters: {}".format(count_parameters(self.causal_model)))
+
     def find_position(self, inputs):
         """
         inputs: [batch_size, seq_len]
@@ -108,7 +113,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
             log_fatal(f"Loss weight (shape {self.loss_weight.shape[0]}) should be longer" +
                     f" than sequence length {pe}")
 
-        outputs, _ = self.forward(inputs, need_cache=False, update_memory=update_memory)
+        outputs, _ = self.forward(inputs, need_cache=False, update_memory=update_memory) #outputs: [batch_size, seq_len, vocab_size]
 
         world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask = self.find_position(inputs)
     
@@ -148,10 +153,16 @@ class OmniRL_MultiAgent(MultiAgentModel):
                                        loss_wht=loss_weight_reward,
                                        reduce_dim=reduce_dim,
                                        need_cnt=False)
+        loss["ent"] = weighted_loss(outputs, 
+                                        loss_type="ent", 
+                                        loss_wht=loss_weight_policy,
+                                        reduce_dim=reduce_dim)
+        loss["causal-l2"] = parameters_regularization(self)
+        return loss
         
     def generate(self, inputs, need_numpy=True, single_batch=True, reward_prediction=False):
         """
-        0, inputs seqences: 
+        0, inputs : tensor with shape [1, NT], only support 1 batch for now: 
             [ idx_o1, o1, idx_o3, o3, idx_o4, o4, ..., 
             idx_a1, a1, idx_a2, a2, idx_a4, a4, ..., 
             idx_policy]
@@ -166,11 +177,55 @@ class OmniRL_MultiAgent(MultiAgentModel):
             else:
                 reutrn wd_obs, wd_action, action
         """
-        pass
+        # inputs: [1, NT]
+        outputs, _ = self.forward(inputs, need_cache=False, update_memory=False)
+        
+        def get_value(output):
+            output = F.softmax(output, dim=-1)  # [B, NT, D]
+            B, NT, D = output.shape
+            output = output.view(-1, D)  # [B*NT, D]
+            samples = torch.multinomial(output, num_samples=1)  # [B*NT, 1]
+            output = samples.view(B, NT)  # [B, NT]
+            return output
+        
+        outputs = get_value(outputs)
+        world_model_obs_mask, world_model_action_mask, policy_mask, _ = self.find_position(inputs)
+        world_model_obs = outputs[world_model_obs_mask].detach().cpu().squeeze()
+        world_model_action = outputs[world_model_action_mask].detach().cpu().squeeze()
+        action = outputs[policy_mask].detach().cpu().squeeze()
+        if need_numpy:
+            world_model_obs = world_model_obs.numpy()
+            world_model_action = world_model_action.numpy()
+            action = action.numpy()
 
-    def incontext_learn(self, inputs):
-        pass
-                                          
+        if not reward_prediction:
+            return world_model_obs, world_model_action, action
+        else:
+            new_value = [self.nobs + self.nother_agent + 1, self.default_tag, 
+                         self.nobs + self.nother_agent + 2, int(action),
+                         self.nobs + self.nother_agent + 3]
+            for i, v in enumerate(new_value):
+                assert isinstance(v, int), f"element{i} type error: {type(v)} should be int."
+            new_inputs = torch.cat((inputs, torch.tensor(new_value, dtype=torch.int64, device=inputs.device).unsqueeze(0)), dim=1)
+            outputs, _ = self.forward(new_inputs, need_cache=False, update_memory=False)
+            outputs = get_value(outputs)
+            _, _, _, reward_mask = self.find_position(inputs)
+            world_model_reward = outputs[reward_mask].detach().cpu().squeeze()
+            if need_numpy:
+                world_model_reward = world_model_reward.numpy()
+            return world_model_obs, world_model_action, action, world_model_reward
+
+
+    def incontext_learn(self, inputs, need_cache = False):
+        """
+        inputs : tensor with shape [1, NT], only support 1 batch for now: 
+            [ idx_o1, o1, idx_o3, o3, idx_o4, o4, ..., 
+            idx_a1, a1, idx_a2, a2, idx_a4, a4, ..., 
+            idx_policy, idx_tag, tag, idx_a_self, a_self, idx_reward]
+        """
+        _, cache = self.forward(inputs, need_cache=need_cache, update_memory=True)
+        if need_cache:
+            return cache                       
 
 if __name__=='__main__':
     pass
