@@ -178,9 +178,20 @@ class MultiAgentDataSet(Dataset):
                         time_step_seq.append(self.vocabularize('special_token', 'idx_reset_env'))
                     agent_sequence.append(time_step_seq)
 
-                sequences.append(np.concatenate(agent_sequence))
-                label_action_seqs.append(self.vocabularize('value', actions_label[agent_id][n_b:n_e]))
-                # TODO, len(agent_sequence) >> len(actions_label)            
+                agent_sequence = np.concatenate(agent_sequence)
+                sequences.append(agent_sequence)
+
+                policy_position_mask = (agent_sequence == self.vocabularize('special_token', 'idx_policy'))
+                label_vocabularize = self.vocabularize('value', actions_label[agent_id][n_b:n_e])
+                if np.sum(policy_position_mask) != len(label_vocabularize):
+                    raise ValueError(
+                        f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
+                        f"not equal to label length ({len(label_vocabularize)})"
+                    )
+                pad_token = -1
+                label_action_array = np.full(agent_sequence.shape, pad_token, dtype=np.int64)
+                label_action_array[policy_position_mask] = label_vocabularize
+                label_action_seqs.append(label_action_array)         
 
             return sequences, label_action_seqs
         except Exception as e:
@@ -349,7 +360,18 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 filter_mask = agent_seq != pad_token
                 agent_seq = agent_seq[filter_mask]
                 sequences.append(agent_seq)
-                label_action_seqs.append(self.vocabularize('value', actions_label[agent_id][time_slice]))
+                
+                policy_position_mask = (agent_seq == self.vocabularize('special_token', 'idx_policy'))
+                label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice])
+                if np.sum(policy_position_mask) != len(label_vocabularize):
+                    raise ValueError(
+                        f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
+                        f"not equal to label length ({len(label_vocabularize)})"
+                    )
+                label_action_array = np.full(agent_seq.shape, pad_token, dtype=np.int64)
+                label_action_array[policy_position_mask] = label_vocabularize
+                
+                label_action_seqs.append(label_action_array)
 
             return sequences, label_action_seqs
         except Exception as e:
