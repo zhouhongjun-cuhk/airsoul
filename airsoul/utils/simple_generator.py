@@ -37,7 +37,7 @@ class ModelLoader:
             model = DDP(model, device_ids=[0] if self.use_gpu else None, find_unused_parameters=True)
             log_debug("Single-process DDP initialized")
 
-            checkpoint_path = os.path.join(self.config.load_model_path, 'model.pth')
+            checkpoint_path = os.path.join(self.config.load_model_path)
             if not os.path.exists(checkpoint_path):
                 log_fatal(f"Checkpoint not found: {checkpoint_path}")
                 raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
