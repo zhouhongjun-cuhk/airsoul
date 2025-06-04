@@ -69,9 +69,9 @@ def EpochManager(cls):
                         else:
                             log_file = self.log_config.evaluation_log
 
-                    # 确保日志文件目录存在
+                    # Make sure file exist.
                     log_dir = os.path.dirname(log_file)
-                    if log_dir and not os.path.exists(log_dir):  # 检查目录非空且不存在
+                    if log_dir and not os.path.exists(log_dir):
                         os.makedirs(log_dir, exist_ok=True)
 
                     self.logger = Logger(
@@ -299,22 +299,22 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     #                                     main=main,
     #                                     is_training=False,
     #                                     extra_info=extra_info))
-    # 构造 log_config
+    # Build log_config.
     for dataset in config.test_config.datasets:
-        # 创建 test_config，直接加载 dataset 字典
+        # Create test_config，load dataset dict.
         test_config = Configure()
-        test_config.from_dict(dataset)  # 使用 from_dict 加载整个 dataset
+        test_config.from_dict(dataset)
 
-        # 创建 log_config 并设置属性
+        # Build log_config.
         log_config = Configure()
         log_config_dict = {
-            "tensorboard_log": dataset["log_dir"],        # 日志目录
-            "evaluation_log": dataset["output"],        # 评估日志路径
-            "use_tensorboard": config.log_config.use_tensorboard  # 是否使用 TensorBoard
+            "tensorboard_log": dataset["log_dir"],
+            "evaluation_log": dataset["output"],
+            "use_tensorboard": config.log_config.use_tensorboard
         }
-        log_config.from_dict(log_config_dict)  # 使用 from_dict 加载日志配置
+        log_config.from_dict(log_config_dict)
 
-        # 创建评估对象
+        # Create evalutaion objects.
         evaluate_list.append(evaluate_objects[0](
             run_name=f"{config.run_name}_{dataset['name']}",
             model=model,
