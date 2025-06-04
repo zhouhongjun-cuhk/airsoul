@@ -287,18 +287,6 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                                         extra_info=extra_info))
 
     evaluate_list = []
-    # for evaluate_object in evaluate_objects:
-    #     evaluate_list.append(evaluate_object(run_name=config.run_name, 
-    #                                     model=model, 
-    #                                     config=config.test_config,
-    #                                     log_config=config.log_config,
-    #                                     rank=rank,
-    #                                     world_size=world_size,
-    #                                     device_type=device_type,
-    #                                     device=device,
-    #                                     main=main,
-    #                                     is_training=False,
-    #                                     extra_info=extra_info))
     # Build log_config.
     for dataset in config.test_config.datasets:
         # Create test_config，load dataset dict.
