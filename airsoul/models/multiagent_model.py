@@ -18,6 +18,8 @@ class MultiAgentModel(nn.Module):
 
         self.word_emb = MLPEncoder(config.word_embeddings)
 
+        # TODO, in config, input size of word_emb = vocab_size + 1. Last one is padding value.
+
         self.nvocab = config.vocab_size
         
         self.encoder = CausalBlock(config.causal_block)
@@ -52,7 +54,8 @@ class OmniRL_MultiAgent(MultiAgentModel):
         idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env -> 6 words
         t tag_value -> t words 
         value of obs, action, and reward ~ [-10, 10], resolution 0.1 -> 200 words
-        Then the total vocabular size = m + n + t + 206
+        idx_padding -> 1 word
+        Then the total vocabular size = m + n + t + 207
         
 
     - For one timestep the sequence is arranged as: 
@@ -76,7 +79,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
         self.register_buffer('loss_weight', loss_weight)
 
         self.nobs = config.nobs
-        self.nother_agent = config.nother_agent
+        self.nagent = config.nagent
         self.default_tag = int(config.default_tag)
 
         if(verbose):
@@ -87,19 +90,19 @@ class OmniRL_MultiAgent(MultiAgentModel):
         """
         inputs: [batch_size, seq_len]
         World Model (obs) position: value in [0, nobs)
-        World Model (action of other agent): value in [nobs, nother_agent)
-        Policy Model: value == nobs + nother_agent
-        World Model (reward): value == nobs + nother_agent + 3; (idx_policy, idx_tag, idx_a_self, idx_reward)
+        World Model (action of other agent): value in [nobs, nagent)
+        Policy Model: value == nobs + nagent
+        World Model (reward): value == nobs + nagent + 3; (idx_policy, idx_tag, idx_a_self, idx_reward)
         return world_model_obs_out, world_model_action_out, policy_out, reward_out
         """
 
         nobs = self.nobs
-        nother_agent = self.nother_agent
+        nagent = self.nagent
 
         world_model_obs_mask = (inputs < nobs)
-        world_model_action_mask = (inputs >= nobs) & (inputs < (nobs + nother_agent))
-        policy_mask = (inputs == (nobs + nother_agent))
-        reward_mask = (inputs == (nobs + nother_agent + 3))
+        world_model_action_mask = (inputs >= nobs) & (inputs < (nobs + nagent))
+        policy_mask = (inputs == (nobs + nagent))
+        reward_mask = (inputs == (nobs + nagent + 3))
 
         return world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask
 
@@ -163,10 +166,11 @@ class OmniRL_MultiAgent(MultiAgentModel):
         
     def generate(self, inputs, need_numpy=True, single_batch=True, reward_prediction=False):
         """
-        0, inputs : tensor with shape [1, NT], only support 1 batch for now: 
+        0, inputs : tensor with shape [BT, NT], 
+            if agents have different seq lenth, padding with value self.nvocab: 
             [ idx_o1, o1, idx_o3, o3, idx_o4, o4, ..., 
             idx_a1, a1, idx_a2, a2, idx_a4, a4, ..., 
-            idx_policy]
+            idx_policy, idx_padding ...]
         1, Forward with inputs, update memory = False. Get wd_obs, wd_action, and action.
         2, if reward_prediction:
                 Form the sequences with action:
@@ -178,7 +182,8 @@ class OmniRL_MultiAgent(MultiAgentModel):
             else:
                 reutrn wd_obs, wd_action, action
         """
-        # inputs: [1, NT]
+        # inputs: [BT, NT]
+        BT = inputs.size(0)
         outputs, _ = self.forward(inputs, need_cache=False, update_memory=False)
         
         def get_value(output):
@@ -191,29 +196,43 @@ class OmniRL_MultiAgent(MultiAgentModel):
         
         outputs = get_value(outputs)
         world_model_obs_mask, world_model_action_mask, policy_mask, _ = self.find_position(inputs)
-        world_model_obs = outputs[world_model_obs_mask].detach().cpu().squeeze()
-        world_model_action = outputs[world_model_action_mask].detach().cpu().squeeze()
-        action = outputs[policy_mask].detach().cpu().squeeze()
+        world_model_obs = []
+        world_model_action = []
+        action = []
+        for i in range(BT):
+            world_model_obs.append(outputs[i][world_model_obs_mask[i]].detach().cpu())
+            world_model_action.append(outputs[i][world_model_action_mask[i]].detach().cpu())
+            action.append(outputs[i][policy_mask[i]].detach().cpu())
+
         if need_numpy:
-            world_model_obs = world_model_obs.numpy()
-            world_model_action = world_model_action.numpy()
-            action = action.numpy()
+            world_model_obs = [obs.numpy() for obs in world_model_obs]
+            world_model_action = [act.numpy() for act in world_model_action]
+            action = [a.numpy() for a in action]
 
         if not reward_prediction:
             return world_model_obs, world_model_action, action
         else:
-            new_value = [self.nobs + self.nother_agent + 1, self.default_tag, # idx_tag, tag
-                         self.nobs + self.nother_agent + 2, int(action.item()), # idx_a_self, a_self
-                         self.nobs + self.nother_agent + 3] # idx_reward
-            for i, v in enumerate(new_value):
-                assert isinstance(v, int), f"element{i} type error: {type(v)} should be int."
-            new_inputs = torch.cat((inputs, torch.tensor(new_value, dtype=torch.int64, device=inputs.device).unsqueeze(0)), dim=1)
+            new_value = torch.tensor([
+                [self.nobs + self.nagent + 1, self.default_tag, # idx_tag, tag
+                self.nobs + self.nagent + 2, int(action[i].item()), # idx_a_self, a_self
+                self.nobs + self.nagent + 3] # idx_reward
+                for i in range(BT)], dtype=torch.int64, device=inputs.device)
+            policy_idx = self.nobs + self.nagent
+            new_nt = inputs.size(1) + 5
+            new_inputs = torch.zeros((BT, new_nt), dtype=torch.int64, device=inputs.device)
+            for i in range(BT):
+                pos = torch.where(inputs[i] == policy_idx)[0]
+                new_inputs[i, :pos+1] = inputs[i, :pos+1]
+                new_inputs[i, pos+1:pos+6] = new_value[i]
+                new_inputs[i, pos+6:] = inputs[i, pos+1:]
             outputs, _ = self.forward(new_inputs, need_cache=False, update_memory=False)
             outputs = get_value(outputs)
             _, _, _, reward_mask = self.find_position(new_inputs)
-            world_model_reward = outputs[reward_mask].detach().cpu().squeeze()
+            world_model_reward = []
+            for i in range(BT):
+                world_model_reward.append(outputs[reward_mask[i]].detach().cpu())
             if need_numpy:
-                world_model_reward = world_model_reward.numpy()
+                world_model_reward = [reward.numpy() for reward in world_model_reward]
             return world_model_obs, world_model_action, action, world_model_reward
 
 
