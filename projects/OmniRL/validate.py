@@ -1,5 +1,7 @@
 import os
 import sys
+import torch
+import gc
 
 custom_paths = [
     '/home/wangfan/airsoul',
@@ -16,3 +18,8 @@ from omnirl_epoch import OmniRLEpoch
 if __name__ == "__main__":
     runner=Runner()
     runner.start(OmniRL, [], OmniRLEpoch, extra_info='validate')
+
+    # 清理 GPU 内存
+    torch.cuda.empty_cache()
+    gc.collect()
+    

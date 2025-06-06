@@ -169,7 +169,7 @@ class OmniRLEpoch:
                         os.makedirs(self.config.output)
                     for key_name in stat_res:
                         res_text = string_mean_var(self.downsample_length, stat_res[key_name])
-                        file_path = f'{self.config.output}/result_{key_name}.txt'
+                        file_path = f'{self.config.output}'
                         if os.path.exists(file_path):
                             os.remove(file_path)
                         with open(file_path, 'w') as f_model:

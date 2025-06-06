@@ -239,7 +239,7 @@ class OmniRL(POTARDecisionModel):
         # Prepare the input observations
         if(not isinstance(observation, torch.Tensor)):
             if not self.config.state_diffusion.enable:
-                obs_in = torch.tensor([observation], dtype=torch.int64).to(device)
+                obs_in = torch.tensor([observation], dtype=torch.float32).to(device)
             else:
                 obs_in = torch.tensor([observation], dtype=torch.float32).to(device)
         else:

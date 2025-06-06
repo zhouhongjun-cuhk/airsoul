@@ -44,6 +44,7 @@ def EpochManager(cls):
                 dataset = DataType(self.config.data_path, 
                                     self.config.seq_len,
                                     verbose=self.main)
+                print(f"Loading dataset from {self.config.data_path}, file count: {len(dataset)}")
                 self.dataloader = PrefetchDataLoader(dataset, batch_size=self.config.batch_size, 
                                             rank=self.rank, world_size=self.world_size)
                 self.computer.dataloader = self.dataloader
@@ -67,6 +68,12 @@ def EpochManager(cls):
                             log_file = self.log_config.training_log
                         else:
                             log_file = self.log_config.evaluation_log
+
+                    # Make sure file exist.
+                    log_dir = os.path.dirname(log_file)
+                    if log_dir and not os.path.exists(log_dir):
+                        os.makedirs(log_dir, exist_ok=True)
+
                     self.logger = Logger(
                             *self.logger_keys,
                             on=self.main, 
@@ -251,7 +258,8 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
             black_list = config.load_model_parameter_blacklist
         else:
             black_list = []
-        model = custom_load_model(model, f'{config.load_model_path}/model.pth', 
+        model = custom_load_model(model, f'{config.load_model_path}', 
+        # model = custom_load_model(model, f'{config.load_model_path}/model.pth', 
                                   black_list=black_list,
                                   verbose=main, 
                                   strict_check=False)
@@ -279,18 +287,35 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                                         extra_info=extra_info))
 
     evaluate_list = []
-    for evaluate_object in evaluate_objects:
-        evaluate_list.append(evaluate_object(run_name=config.run_name, 
-                                        model=model, 
-                                        config=config.test_config,
-                                        log_config=config.log_config,
-                                        rank=rank,
-                                        world_size=world_size,
-                                        device_type=device_type,
-                                        device=device,
-                                        main=main,
-                                        is_training=False,
-                                        extra_info=extra_info))
+    # Build log_config.
+    for dataset in config.test_config.datasets:
+        # Create test_config，load dataset dict.
+        test_config = Configure()
+        test_config.from_dict(dataset)
+
+        # Build log_config.
+        log_config = Configure()
+        log_config_dict = {
+            "tensorboard_log": dataset["log_dir"],
+            "evaluation_log": dataset["output"],
+            "use_tensorboard": config.log_config.use_tensorboard
+        }
+        log_config.from_dict(log_config_dict)
+
+        # Create evalutaion objects.
+        evaluate_list.append(evaluate_objects[0](
+            run_name=f"{config.run_name}_{dataset['name']}",
+            model=model,
+            config=test_config,
+            log_config=log_config,
+            rank=rank,
+            world_size=world_size,
+            device_type=device_type,
+            device=device,
+            main=main,
+            is_training=False,
+            extra_info=extra_info
+        ))
 
     for train_object in train_list:
         train_object._preprocess()
@@ -299,6 +324,7 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
 
     def evaluate_epoch(eid):
         for evaluate_object in evaluate_list:
+            print(f"Evaluating dataset: {evaluate_object.run_name}")
             evaluate_object._epoch_start(eid)
             for _ in evaluate_object.run(eid, device, device_type):
                 pass
