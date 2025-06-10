@@ -97,7 +97,7 @@ class MultiAgentDataSet(Dataset):
             scalar_input = True
             
         clipped = np.clip(value, self.min_value, self.max_value)
-        quantized = ((clipped - self.min_value) / self.resolution).astype(np.int64)
+        quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
         result = self.VALUE_BASE + quantized
         
         return result.item() if scalar_input else result
@@ -218,7 +218,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
             scalar_input = True
             
         clipped = np.clip(value, self.min_value, self.max_value)
-        quantized = ((clipped - self.min_value) / self.resolution).astype(np.int64)
+        quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
         result = self.VALUE_BASE + quantized
         
         return result.item() if scalar_input else result
