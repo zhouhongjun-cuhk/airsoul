@@ -132,6 +132,7 @@ model_config:
       use_blockrecurrence: True
       checkpoints_density: -1
       memory_type: MEM
+      memory_length: 0 
       is_frozen: False
       is_generate: False
 
@@ -150,6 +151,7 @@ model_config:
       checkpoints_density: -1
       gate_bound: 12
       memory_type: MEM
+      memory_length: 0
       is_frozen: False
 
   causal_block_bak_4:
@@ -163,6 +165,7 @@ model_config:
       use_blockrecurrence: True
       checkpoints_density: -1
       memory_type: MEM
+      memory_length: 0
       is_frozen: False
 
   causal_block_bak_5:
@@ -172,10 +175,12 @@ model_config:
       inner_hidden_size: 1024
       dropout: 0.10
       nhead: 8
+      expend_v: 1 # default 2
       use_layer_norm: True
       use_blockrecurrence: True
       checkpoints_density: -1
       memory_type: MEM
+      memory_length: 0
       is_frozen: False
       is_generate: False
 

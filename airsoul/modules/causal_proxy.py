@@ -101,7 +101,8 @@ class CausalBlock(nn.Module):
                 need_block_wrapper=False,
                 io_size=config.hidden_size,
                 intermediate_size=config.inner_hidden_size,
-                num_heads=config.nhead
+                num_heads=config.nhead,
+                expend_v = config.expend_v
             )           
         else:
             raise Exception("No such causal model: %s" % config.model_type)

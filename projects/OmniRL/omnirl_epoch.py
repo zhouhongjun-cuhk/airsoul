@@ -24,8 +24,6 @@ from online_rl_utils import OnlineRL, LoadRLModel
 from gym_env_wapper import DiscreteEnvWrapper, Switch2, DarkroomEnv
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
 from xenoverse.anymdp import AnyMDPTaskSampler
-from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
-from stable_baselines3 import DQN, A2C, TD3, PPO
 
 
 def string_mean_var(downsample_length, res):
@@ -42,7 +40,7 @@ class OmniRLEpoch:
     def __init__(self, **kwargs):
         for key in kwargs:
             setattr(self, key, kwargs[key])
-        self.DataType=AnyMDPv2DataSet #AnyMDPDataSet
+        self.DataType=AnyMDPDataSet #AnyMDPDataSet
         if(self.is_training):
             self.logger_keys = ["learning_rate", 
                         "loss_worldmodel_state", 
