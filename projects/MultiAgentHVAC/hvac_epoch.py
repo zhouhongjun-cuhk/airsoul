@@ -6,7 +6,7 @@ from airsoul.dataloader import segment_iterator
 from airsoul.utils import Logger, log_progress, log_debug, log_warn, log_fatal
 from airsoul.utils import DistStatistics, downsample
 from airsoul.utils import EpochManager, GeneratorBase, Logger
-from airsoul.dataloader import MultiAgentDataSetVetorized
+from airsoul.dataloader import MultiAgentLoadDateSet
 
 def string_mean_var(downsample_length, res):
     string=""
@@ -22,7 +22,7 @@ class HVACEpoch:
     def __init__(self, **kwargs):
         for key in kwargs:
             setattr(self, key, kwargs[key])
-        self.DataType=MultiAgentDataSetVetorized
+        self.DataType=MultiAgentLoadDateSet
         if(self.is_training):
             self.logger_keys = ["learning_rate", 
                         "loss_worldmodel_state", 

@@ -3,8 +3,72 @@ import glob
 import sys
 import random
 import torch
+from tqdm import tqdm
+import shutil
+import multiprocessing
+from multiprocessing import Pool, Manager
+import glob
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
+
+class MultiAgentLoadDateSet(Dataset):
+    def __init__(self, directory, time_step, verbose=False):
+        if(verbose):
+            print("\nInitializing data set from file: %s..." % directory)
+        self.file_list = []
+        directories = []
+        if(isinstance(directory, list)):
+            directories.extend(directory)
+        else:
+            directories.append(directory)
+        for d in directories:
+            file_list = os.listdir(d)
+            self.file_list.extend([os.path.join(d, file) for file in file_list])
+            
+        self.time_step = time_step
+
+        if(verbose):
+            print("...finished initializing data set, number of samples: %s\n" % len(self.file_list))
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def _load_and_process_data(self, path):
+        try:
+            sequence = np.load(path + 'sequence.npy')
+            label_action = np.load(path + 'label_action.npy')
+
+            max_t = min(sequence.shape[0], 
+                        label_action.shape[0])
+
+            # Shape Check
+            if(self.time_step > max_t):
+                print(f'[Warning] Load samples from {path} that is shorter ({max_t}) than specified time step ({self.time_step})')
+                n_b = 0
+                n_e = max_t
+            else:
+                n_b = 0
+                n_e = self.time_step
+
+            return (sequence[n_b:n_e], 
+                    label_action[n_b:n_e])
+        except Exception as e:
+            print(f"Unexpected reading error founded when loading {path}: {e}")
+            return (None,) * 2
+        
+    def __getitem__(self, index):
+        path = self.file_list[index]
+
+        data = self._load_and_process_data(path)
+        
+        if any(arr is None for arr in data):
+            return None
+
+        seq_arr = torch.from_numpy(data[0].astype("int32")).long() 
+        lact_arr = torch.from_numpy(data[1].astype("int32")).long() 
+
+        # Orders: Seqnence and Action Label
+        return seq_arr, lact_arr
 
 class MultiAgentDataSet(Dataset):
     """
@@ -147,8 +211,7 @@ class MultiAgentDataSet(Dataset):
                 n_b = 0
                 n_e = self.time_step
 
-            sequences = []
-            label_action_seqs = []
+            sequence_list = []
             for agent_id in range(num_agent):
                 relevant_obs = np.where(obs_matrix[:, agent_id] == 1)[0]
                 connected_agents = np.where(agent_matrix[agent_id] == 1)[0]
@@ -179,7 +242,6 @@ class MultiAgentDataSet(Dataset):
                     agent_sequence.append(time_step_seq)
 
                 agent_sequence = np.concatenate(agent_sequence)
-                sequences.append(agent_sequence)
 
                 policy_position_mask = (agent_sequence == self.vocabularize('special_token', 'idx_policy'))
                 label_vocabularize = self.vocabularize('value', actions_label[agent_id][n_b:n_e])
@@ -190,10 +252,11 @@ class MultiAgentDataSet(Dataset):
                     )
                 pad_token = -1
                 label_action_array = np.full(agent_sequence.shape, pad_token, dtype=np.int64)
-                label_action_array[policy_position_mask] = label_vocabularize
-                label_action_seqs.append(label_action_array)         
+                label_action_array[policy_position_mask] = label_vocabularize  
 
-            return sequences, label_action_seqs
+                sequence_list.append((agent_sequence, label_action_array))      
+
+            return sequence_list
         except Exception as e:
             print(f"Unexpected reading error founded when loading {path}: {e}")
             return (None,) * 6
@@ -295,8 +358,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
             obs_conn_mask = [obs_matrix[:,i].astype(bool) for i in range(num_agents)]
             agent_conn_mask = [agent_matrix[i].astype(bool) for i in range(num_agents)]
 
-            sequences = []
-            label_action_seqs = []
+            sequence_list = []
             for agent_id in range(num_agents):
                 # Obtain the association relationship of the current agent
                 obs_mask = obs_conn_mask[agent_id]
@@ -359,7 +421,6 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 agent_seq = agent_seq.reshape(-1) # (timesteps * (num_relative_obs * 2 + num_relative_agents * 2 + 9))
                 filter_mask = agent_seq != pad_token
                 agent_seq = agent_seq[filter_mask]
-                sequences.append(agent_seq)
                 
                 policy_position_mask = (agent_seq == self.vocabularize('special_token', 'idx_policy'))
                 label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice])
@@ -371,13 +432,149 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 label_action_array = np.full(agent_seq.shape, pad_token, dtype=np.int64)
                 label_action_array[policy_position_mask] = label_vocabularize
                 
-                label_action_seqs.append(label_action_array)
+                sequence_list.append((agent_seq, label_action_array))
 
-            return sequences, label_action_seqs
+            return sequence_list
         except Exception as e:
             print(f"Unexpected reading error founded when loading {path}: {e}")
             return (None,) * 6
+
+def process_subdir(args):
+    """
+    A parallel task function for handling a single subfolder
+    """
+    sub_dir, load_dir, save_dir, counter, lock, params = args
+    sub_path = os.path.join(load_dir, sub_dir)
+    
+    time_step = params['time_step']
+    max_obs = params['max_obs']
+    max_agent = params['max_agent']
+    max_tag = params['max_tag']
+    value_num = params['value_num']
+    resolution = params['resolution']
+    
+    try:
+        # Each process creates its own instance of the dataset
+        dataset = MultiAgentDataSetVetorized(
+            directory=load_dir,
+            time_step=time_step,
+            max_obs=max_obs,
+            max_agent=max_agent,
+            max_tag=max_tag,
+            value_num=value_num,
+            resolution=resolution,
+            verbose=False
+        )
         
+        results = dataset._load_and_process_data(sub_path)
+        
+        # Use locks to ensure the security of the counter
+        with lock:
+            current_counter = counter.value
+            # Pre-assign all the record numbers required for this task
+            record_ids = list(range(current_counter, current_counter + len(results)))
+            counter.value += len(results)
+        
+        for i, (sequence, label_action) in enumerate(results):
+            record_name = f"record_{record_ids[i]:06d}"
+            record_path = os.path.join(save_dir, record_name)
+            os.makedirs(record_path, exist_ok=True)
+            
+            np.save(os.path.join(record_path, "sequence.npy"), sequence)
+            np.save(os.path.join(record_path, "label_action.npy"), label_action)
+            
+            # Save origin data (optional)
+            # src_files = glob.glob(os.path.join(sub_path, "*"))
+            # for src_file in src_files:
+            #     if os.path.isfile(src_file):
+            #         shutil.copy2(src_file, record_path)
+            
+            print(f"Process {os.getpid()}: Saved record {record_name} from {sub_dir} agent {i}")
+        
+        return len(results)
+    
+    except Exception as e:
+        print(f"Error processing {sub_dir}: {str(e)}")
+        return 0
+
+def main(load_dir, save_dir, time_step, max_obs, max_agent, max_tag, value_num, resolution, num_workers=None):
+
+    os.makedirs(save_dir, exist_ok=True)
+    
+    sub_dirs = [d for d in os.listdir(load_dir) 
+                if os.path.isdir(os.path.join(load_dir, d))]
+    
+    print(f"Found {len(sub_dirs)} subdirectories to process")
+    
+    # Declare shared counters and locks
+    manager = Manager()
+    counter = manager.Value('i', 0)
+    lock = manager.Lock()
+    
+    params = {
+        'time_step': time_step,
+        'max_obs': max_obs,
+        'max_agent': max_agent,
+        'max_tag': max_tag,
+        'value_num': value_num,
+        'resolution': resolution
+    }
+    
+    tasks = [(sub_dir, load_dir, save_dir, counter, lock, params) 
+             for sub_dir in sub_dirs]
+    
+    if num_workers is None:
+        num_workers = multiprocessing.cpu_count()
+    else:
+        num_workers = min(num_workers, multiprocessing.cpu_count())
+    total_records = 0
+    
+    with Pool(processes=num_workers) as pool:
+        results = list(tqdm(pool.imap_unordered(process_subdir, tasks), 
+                           total=len(tasks),
+                           desc="Processing subdirectories"))
+        
+        total_records = sum(results)
+    
+    print(f"\nProcessing completed! Total records saved: {total_records}")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Process multi-agent dataset in parallel")
+    parser.add_argument("--load_dir", type=str, required=True, 
+                        help="Directory containing subdirectories with data")
+    parser.add_argument("--save_dir", type=str, required=True,
+                        help="Directory to save processed records")
+    parser.add_argument("--time_step", type=int, required=True,
+                        help="Time step parameter")
+    parser.add_argument("--max_obs", type=int, required=True,
+                        help="Maximum observations parameter")
+    parser.add_argument("--max_agent", type=int, required=True,
+                        help="Maximum agents parameter")
+    parser.add_argument("--max_tag", type=int, required=True,
+                        help="Maximum tags parameter")
+    parser.add_argument("--value_num", type=int, required=True,
+                        help="Value number parameter")
+    parser.add_argument("--resolution", type=float, required=True,
+                        help="Resolution parameter")
+    parser.add_argument("--num_workers", type=int, default=None,
+                        help="Number of worker processes to use (default: all cores)")
+    args = parser.parse_args()
+    
+    main(
+        args.load_dir,
+        args.save_dir,
+        args.time_step,
+        args.max_obs,
+        args.max_agent,
+        args.max_tag,
+        args.value_num,
+        args.resolution,
+        num_workers=args.num_workers
+    )
+
+
 ############ test ##############
 
 import unittest
@@ -540,5 +737,5 @@ class TestMultiAgentDataset(unittest.TestCase):
         self.assertLess(vec_time, base_time, "向量化版本应更快")
 
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
+# if __name__ == '__main__':
+#     unittest.main(verbosity=2)
