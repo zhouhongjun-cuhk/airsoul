@@ -24,7 +24,7 @@ class GatedDeltaNet(nn.Module):
                                           hidden_size = io_size,
                                           intermediate_size = intermediate_size,
                                           num_heads = num_heads,
-                                          # head_dim = int(0.75 * io_size//num_heads),
+                                          # head_dim = int(io_size//num_heads),
                                           vocab_size = 32000,
                                           expand_v = expend_v, # default 2
                                           conv_size = 4)
