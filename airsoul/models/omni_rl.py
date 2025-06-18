@@ -255,8 +255,8 @@ class OmniRL(POTARDecisionModel):
                  # (batch,) -> (batch, 1)
                 tag_in = tag_in.unsqueeze(-1)
             elif tag_in.shape[0] == 1 and tag_in.shape[1] > 1:
-                 # (1, batch) -> (batch, 1
-                tag_in = tag_in.transpose(0, 1) )
+                 # (1, batch) -> (batch, 1)
+                tag_in = tag_in.transpose(0, 1)
             # (batch, 1) -> (batch, 1, 1)
             tag_in = tag_in.unsqueeze(1)
 
