@@ -223,47 +223,77 @@ class OmniRL(POTARDecisionModel):
         # Prepare the input prompts
         if(not self.p_included):
             pro_in = None
-        elif(not isinstance(prompt, torch.Tensor)):
-            pro_in = torch.tensor([prompt], dtype=torch.float32).to(device)
+        elif not isinstance(prompt, torch.Tensor):
+            # Handle non-tensor input (e.g., list or scalar) for batch=1
+            pro_in = torch.tensor(prompt, dtype=torch.float32).to(device)
+            # Ensure at least 2D input (dim_p,) -> (1, dim_p)
+            if pro_in.dim() < 2:
+                # (dim_p,) -> (1, dim_p)
+                pro_in = pro_in.unsqueeze(0)
+            # (1, dim_p) -> (1, 1, dim_p)
+            pro_in = pro_in.unsqueeze(1)
         else:
             pro_in = prompt.to(device)
+            # Ensure (batch, dim_p) -> (batch, 1, dim_p)
+            pro_in = pro_in.unsqueeze(1)
         
         # Prepare the input tags
         if(not self.t_included):
             tag_in = None
         elif(not isinstance(tag, torch.Tensor)):
-            tag_in = torch.tensor([tag], dtype=torch.int64).to(device)
+            # Handle non-tensor input (e.g., list [0, 1, 2, 3, 4, 5, 6, 7])
+            tag_in = torch.tensor(tag, dtype=torch.int64).to(device)
+            # Ensure (batch,) -> (batch, 1)
+            if tag_in.dim() == 1:
+                tag_in = tag_in.unsqueeze(-1)
+            # (batch, 1) -> (batch, 1, 1)
+            tag_in = tag_in.unsqueeze(1)
         else:
             tag_in = tag.to(device)
+            # Handle (batch,) or (batch, 1) or (1, batch)
+            if tag_in.dim() == 1:
+                 # (batch,) -> (batch, 1)
+                tag_in = tag_in.unsqueeze(-1)
+            elif tag_in.shape[0] == 1 and tag_in.shape[1] > 1:
+                 # (1, batch) -> (batch, 1)
+                tag_in = tag_in.transpose(0, 1)
+            # (batch, 1) -> (batch, 1, 1)
+            tag_in = tag_in.unsqueeze(1)
 
         # Prepare the input observations
         if(not isinstance(observation, torch.Tensor)):
-            if not self.config.state_diffusion.enable:
-                obs_in = torch.tensor([observation], dtype=torch.float32).to(device)
-            else:
-                obs_in = torch.tensor([observation], dtype=torch.float32).to(device)
+            # Handle non-tensor input (e.g., list) for batch=1
+            obs_in = torch.tensor(observation, dtype=torch.float32).to(device)
+            # Ensure at least 2D input (dim,) -> (1, dim)
+            if obs_in.dim() < 2:
+                # (dim,) -> (1, dim)
+                obs_in = obs_in.unsqueeze(0)
+            # (1, dim) -> (1, 1, dim)
+            obs_in = obs_in.unsqueeze(1)
         else:
             obs_in = observation.to(device)
-
-        if(single_batch):
-            if(pro_in is not None):
-                pro_in = pro_in.unsqueeze(0)
-            if(tag_in is not None):
-                tag_in = tag_in.unsqueeze(0)
-            obs_in = obs_in.unsqueeze(0)
+            # Ensure (batch, dim) -> (batch, 1, dim)
+            obs_in = obs_in.unsqueeze(1)
 
         B, T = obs_in.shape[:2]
+
+        # Prepare default rewards
         if(self.r_included):
             if(self.reward_dtype == "Discrete"):
+                # Shape (batch, 1)
                 default_r = self.default_r.to(device=device).expand(B, T)
             elif(self.reward_dtype == "Continuous"):
+                # Shape (batch, 1, R)
                 default_r = self.default_r.to(device=device).expand(B, T, -1)
         else:
             default_r = None
-        
+
+        # Prepare default actions
         if(self.action_dtype == "Discrete"):
+            # Shape (batch, 1)
             default_a = self.default_a.to(device).expand(B, T)
         elif(self.action_dtype == "Continuous"):
+            # Shape (batch, 1, A)
             default_a = self.default_a.to(device).expand(B, T, -1)
 
         wm_out, pm_out, _ = self.forward(
