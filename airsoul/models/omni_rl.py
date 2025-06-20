@@ -221,7 +221,7 @@ class OmniRL(POTARDecisionModel):
         device = next(self.parameters()).device
 
         # Prepare the input prompts
-        if not self.p_included:
+        if(not self.p_included):
             pro_in = None
         elif not isinstance(prompt, torch.Tensor):
             # Handle non-tensor input (e.g., list or scalar) for batch=1
@@ -238,9 +238,9 @@ class OmniRL(POTARDecisionModel):
             pro_in = pro_in.unsqueeze(1)
         
         # Prepare the input tags
-        if not self.t_included:
+        if(not self.t_included):
             tag_in = None
-        elif not isinstance(tag, torch.Tensor):
+        elif(not isinstance(tag, torch.Tensor)):
             # Handle non-tensor input (e.g., list [0, 1, 2, 3, 4, 5, 6, 7])
             tag_in = torch.tensor(tag, dtype=torch.int64).to(device)
             # Ensure (batch,) -> (batch, 1)
@@ -261,7 +261,7 @@ class OmniRL(POTARDecisionModel):
             tag_in = tag_in.unsqueeze(1)
 
         # Prepare the input observations
-        if not isinstance(observation, torch.Tensor):
+        if(not isinstance(observation, torch.Tensor)):
             # Handle non-tensor input (e.g., list) for batch=1
             obs_in = torch.tensor(observation, dtype=torch.float32).to(device)
             # Ensure at least 2D input (dim,) -> (1, dim)
@@ -278,21 +278,21 @@ class OmniRL(POTARDecisionModel):
         B, T = obs_in.shape[:2]
 
         # Prepare default rewards
-        if self.r_included:
-            if self.reward_dtype == "Discrete":
+        if(self.r_included):
+            if(self.reward_dtype == "Discrete"):
                 # Shape (batch, 1)
                 default_r = self.default_r.to(device=device).expand(B, T)
-            elif self.reward_dtype == "Continuous":
+            elif(self.reward_dtype == "Continuous"):
                 # Shape (batch, 1, R)
                 default_r = self.default_r.to(device=device).expand(B, T, -1)
         else:
             default_r = None
 
         # Prepare default actions
-        if self.action_dtype == "Discrete":
+        if(self.action_dtype == "Discrete"):
             # Shape (batch, 1)
             default_a = self.default_a.to(device).expand(B, T)
-        elif self.action_dtype == "Continuous":
+        elif(self.action_dtype == "Continuous"):
             # Shape (batch, 1, A)
             default_a = self.default_a.to(device).expand(B, T, -1)
 
