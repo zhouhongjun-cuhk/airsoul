@@ -115,28 +115,29 @@ def EpochManager(cls):
 
         def _valid_epoch(self):
             if(hasattr(self.computer, 'valid_epoch')):
-                return self.computer.valid_epoch(self.get_global_epoch_id)
+                return self.computer.valid_epoch()
             return True
 
         def _epoch_start(self):
-            if(not self._valid_epoch(self.get_global_epoch_id)):
+            if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_start')):
-                self.computer.epoch_start(self.get_global_epoch_id)
+                self.computer.epoch_start()
         
         def _epoch_end(self):
-            if(not self._valid_epoch(self.get_global_epoch_id)):
+            if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_end')):
-                self.computer.epoch_end(self.get_global_epoch_id)
+                self.computer.epoch_end()
 
         def _preprocess(self):
             if(hasattr(self.computer, 'preprocess')):
                 self.computer.preprocess()
-            if("steps" not in self.training_meta_info):
-                self.training_meta_info["steps"] = 0
-            if("epochs" not in self.training_meta_info):
-                self.training_meta_info["epochs"] = 0
+            if("training_meta_info" in self.__dict__):
+                if("steps" not in self.training_meta_info):
+                    self.training_meta_info["steps"] = 0
+                if("epochs" not in self.training_meta_info):
+                    self.training_meta_info["epochs"] = 0
             self.init_dataloader()
             self.init_logger()
             self.init_optimizer()
@@ -242,7 +243,7 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
         torch.cuda.set_device(rank)  # Set the current GPU to be used
         device = torch.device(f'cuda:{rank}')
         device_type = 'cuda'
-        dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=timedelta(seconds=30))
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
     else:
         device = torch.device('cpu')
         device_type = 'cpu'
@@ -287,17 +288,17 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     if(not isinstance(evaluate_objects, list) and not isinstance(evaluate_objects, tuple)):
         evaluate_objects = [evaluate_objects]        
 
-    if(self.config.has_attr('monitor_dir')):
-        watch_dir = self.config.monitor_dir
+    if(config.has_attr('monitor_dir')):
+        watch_dir = config.monitor_dir
     else:
         watch_dir = None
 
     train_list = []
     for train_object in train_objects:
-        if(train_object.name not in modelinfo):
+        if(train_object.__name__ not in metainfo):
             object_info = dict()
         else:
-            object_info = metainfo[train_object.name]
+            object_info = metainfo[train_object.__name__]
         if(config.has_attr("reset_metainfo")):
             for key,value in config.get_dict("reset_metainfo").items():
                 object_info[key] = value
@@ -317,10 +318,10 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
 
     evaluate_list = []
     for evaluate_object in evaluate_objects:
-        if(train_object.name not in modelinfo):
+        if(train_object.__name__ not in metainfo):
             object_info = dict()
         else:
-            object_info = modelinfo[train_object.name]
+            object_info = modelinfo[train_object.__name__]
         evaluate_list.append(evaluate_object(run_name=config.run_name, 
                                         model=model, 
                                         meta_info=object_info,

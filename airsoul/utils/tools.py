@@ -191,8 +191,8 @@ def custom_load_model(model,
 
     saved_metainfo = torch.load(state_dict_path, weights_only=False) 
     metainfo = dict()
-    if("metadict_models" in saved_state_dict):
-        saved_state_dict = saved_state_dict["metadict_models"]
+    if("metadict_models" in saved_metainfo):
+        saved_state_dict = saved_metainfo["metadict_models"]
         for key in save_metainfo:
             toks = key.split('_')
             """
