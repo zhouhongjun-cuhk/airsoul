@@ -70,7 +70,9 @@ class OmniRLEpoch:
             self.reward_dropout = 0.20
 
     def compute(self, sarr, parr, tarr, baarr, rarr, laarr,
-                        batch_id=-1):
+                        global_batch_id=-1,
+                        local_batch_id=-1,
+                        global_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -121,8 +123,8 @@ class OmniRLEpoch:
                         stat_res["loss_worldmodel_reward"]["mean"], 
                         stat_res["loss_policymodel"]["mean"], 
                         stat_res["entropy"]["mean"],
-                        epoch=self.get_global_epoch_id,
-                        iteration=batch_id)
+                        epoch=global_epoch_id,
+                        iteration=local_batch_id)
         else:
             loss_wm_s = torch.cat([loss["wm-s"] / torch.clamp_min(loss["count_s"], 1.0e-3) 
                     for loss in losses], dim=1)
@@ -150,7 +152,7 @@ class OmniRLEpoch:
                         validation_entropy=loss_ent[i],
                         count=counts[i])
             
-    def epoch_end(self):
+    def epoch_end(self, epoch_id):
         if(not self.is_training):
             stat_res = self.stat()
             if(self.logger is not None):
@@ -158,7 +160,7 @@ class OmniRLEpoch:
                         stat_res["validation_reward_pred"]["mean"], 
                         stat_res["validation_policy"]["mean"],
                         stat_res["validation_entropy"]["mean"],
-                        epoch=self.get_global_epoch_id)
+                        epoch=epoch_id)
             if(self.extra_info is not None):
                 if(self.extra_info.lower() == 'validate' and self.main):
                     if not os.path.exists(self.config.output):

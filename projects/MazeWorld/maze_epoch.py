@@ -68,14 +68,17 @@ class MazeEpochVAE:
             world_size=self.world_size
             )
             
-    def valid_epoch(self): # Add epoch control for VAE training
+    def valid_epoch(self, epoch_id): # Add epoch control for VAE training
         if(self.config.has_attr('epoch_vae_stop')):
-            if(self.get_global_epoch_id >= self.config.epoch_vae_stop):
+            if(epoch_id >= self.config.epoch_vae_stop):
                 return False
         return True
 
     def compute(self, obs_arr, behavior_actid_arr, label_actid_arr, 
-                behavior_act_arr, label_act_arr, rew_arr, batch_id=-1):
+                behavior_act_arr, label_act_arr, rew_arr, 
+                local_batch_id=-1,
+                global_batch_id=-1,
+                gloabl_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -116,8 +119,8 @@ class MazeEpochVAE:
                             self.lambda_scheduler(), 
                             stat_res["reconstruction_error"]["mean"], 
                             stat_res["kl_divergence"]["mean"],
-                            epoch=self.get_global_epoch_id,
-                            iteration=batch_id)
+                            epoch=global_epoch_id,
+                            iteration=local_batch_id)
             # update the scheduler
             self.sigma_scheduler.step()
             self.lambda_scheduler.step()
@@ -126,15 +129,14 @@ class MazeEpochVAE:
                     reconstruction_error=loss["Reconstruction-Error"] / loss["count"], 
                     kl_divergence=loss["KL-Divergence"] / loss["count"], 
                     count=loss["count"])
-            
         
-    def epoch_end(self):
+    def epoch_end(self, epoch_id):
         if(not self.is_training):
             stat_res = self.stat()
             if(self.logger is not None):
                 self.logger(stat_res["reconstruction_error"]["mean"], 
                         stat_res["kl_divergence"]["mean"], 
-                        epoch=self.get_global_epoch_id)
+                        epoch=epoch_id)
 
 @EpochManager
 class MazeEpochCausal:
@@ -163,9 +165,9 @@ class MazeEpochCausal:
                 self.downsample_length = 100
             self.reduce_dim = None
             
-    def valid_epoch(self): # Add epoch control for VAE training
+    def valid_epoch(self, epoch_id): # Add epoch control for VAE training
         if(self.config.has_attr('epoch_causal_stop')):
-            if(self.get_global_epoch_id < self.config.epoch_causal_start):
+            if(epoch_id < self.config.epoch_causal_start):
                 return False
         return True
 
@@ -180,7 +182,9 @@ class MazeEpochCausal:
 
     def compute(self, cmd_arr, obs_arr, behavior_actid_arr, label_actid_arr, 
                 behavior_act_arr, label_act_arr, rew_arr,
-                batch_id=-1):
+                global_batch_id=-1,
+                local_batch_id=-1,
+                global_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -230,8 +234,8 @@ class MazeEpochCausal:
                             stat_res["loss_worldmodel_raw"]["mean"], 
                             stat_res["loss_worldmodel_latent"]["mean"],
                             stat_res["loss_policymodel"]["mean"],
-                            epoch=self.get_global_epoch_id,
-                            iteration=batch_id)
+                            epoch=global_epoch_id,
+                            iteration=local_batch_id)
         else:
             loss_wm_r = torch.cat([loss["wm-raw"] / loss["count_wm"] for loss in losses], dim=1)
             loss_wm_l = torch.cat([loss["wm-latent"] / loss["count_wm"] for loss in losses], dim=1)
@@ -254,14 +258,14 @@ class MazeEpochCausal:
                         validate_policymodel=loss_pm[i],
                         count=counts[i])
         
-    def epoch_end(self):
+    def epoch_end(self, epoch_id):
         if(not self.is_training):
             stat_res = self.stat()
             if(self.logger is not None):
                 self.logger(stat_res["validate_worldmodel_raw"]["mean"], 
                         stat_res["validate_worldmodel_latent"]["mean"], 
                         stat_res["validate_policymodel"]["mean"],
-                        epoch=self.get_global_epoch_id)
+                        epoch=epoch_id)
             if(self.extra_info is not None):
                 if(self.extra_info.lower() == 'validate' and self.main):
                     if not os.path.exists(self.config.output):

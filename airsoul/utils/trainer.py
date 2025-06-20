@@ -115,20 +115,20 @@ def EpochManager(cls):
 
         def _valid_epoch(self):
             if(hasattr(self.computer, 'valid_epoch')):
-                return self.computer.valid_epoch()
+                return self.computer.valid_epoch(self.get_global_epoch_id)
             return True
 
         def _epoch_start(self):
             if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_start')):
-                self.computer.epoch_start()
+                self.computer.epoch_start(self.get_global_epoch_id)
         
         def _epoch_end(self):
             if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_end')):
-                self.computer.epoch_end()
+                self.computer.epoch_end(self.get_global_epoch_id)
 
         def _preprocess(self):
             if(hasattr(self.computer, 'preprocess')):
@@ -177,7 +177,9 @@ def EpochManager(cls):
                     with autocast(dtype=torch.bfloat16, enabled=self.config.use_amp, device_type=device_type):
                         self.computer.compute(
                                   *batch_data, 
-                                  batch_id=batch_id)
+                                  local_batch_id=batch_id,
+                                  global_batch_id=self.get_global_batch_id,
+                                  global_epoch_id=self.get_global_epoch_id)
                     if(manual_sync):
                         for param in self.model.parameters():
                             if(param.grad is not None):
