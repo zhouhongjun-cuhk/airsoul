@@ -35,7 +35,7 @@ class LMEpoch:
             else:
                 self.downsample_length = 100
 
-    def compute(self, feas, labs, epoch_id=-1, batch_id=-1):
+    def compute(self, feas, labs, batch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -65,7 +65,7 @@ class LMEpoch:
             if(self.logger is not None):
                 self.logger(self.optimizer.param_groups[0]['lr'],
                         stat_res["train_perplexity"]["mean"],
-                        epoch=epoch_id,
+                        epoch=self.get_global_epoch_id,
                         iteration=batch_id)
         else:
             perpl = torch.cat([loss["perplexity"] / loss["count"] for loss in losses], dim=1)
@@ -83,12 +83,12 @@ class LMEpoch:
                         validate_perplexity=perpl[i],
                         count=counts[i])
             
-    def epoch_end(self, epoch_id):
+    def epoch_end(self):
         if(not self.is_training):
             stat_res = self.stat()
             if(self.logger is not None):
                 self.logger(stat_res["validate_perplexity"]["mean"], 
-                        epoch=epoch_id)
+                        epoch=self.get_global_epoch_id)
             if(self.extra_info is not None):
                 if(self.extra_info.lower() == 'validate' and self.main):
                     if not os.path.exists(self.config.output):
