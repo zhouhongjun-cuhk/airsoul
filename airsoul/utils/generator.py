@@ -73,7 +73,7 @@ def dist_generator(rank, use_gpu, world_size, config, main_rank,
     if(main):
         log_debug("Main gpu", rank, device)
 
-    model_num = config.generator_config.agent_num
+    model_num = 1
     models = []
     for model_idx in range(model_num):
         # Create model and move it to GPU with id `gpu`
@@ -104,6 +104,7 @@ def dist_generator(rank, use_gpu, world_size, config, main_rank,
         generator=generator_class(run_name=config.run_name, 
                                 model=models[0], 
                                 config=config.generator_config,
+                                log_config=config.log_config,
                                 action_dim=config.model_config.action_dim,
                                 rank=rank,
                                 world_size=world_size,
@@ -115,6 +116,7 @@ def dist_generator(rank, use_gpu, world_size, config, main_rank,
         generator=generator_class(run_name=config.run_name, 
                                 model=models, 
                                 config=config.generator_config,
+                                log_config=config.log_config,
                                 action_dim=config.model_config.action_dim,
                                 rank=rank,
                                 world_size=world_size,
@@ -130,8 +132,11 @@ def dist_generator(rank, use_gpu, world_size, config, main_rank,
             models[model_idx].module.reset()
             models[model_idx].eval()
         generator(epoch_id)
+        generator.epoch_end(epoch_id)
         log_debug(f"... GPU {rank} finishes processing epoch {epoch_id}")
     generator.postprocess()
+    print(f"GPU {rank} finishes all epochs")
+    dist.destroy_process_group()
 
 class GeneratorRunner(Runner):
     """
