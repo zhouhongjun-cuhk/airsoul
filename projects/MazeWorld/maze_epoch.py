@@ -122,8 +122,8 @@ class MazeEpochVAE:
                             epoch=global_epoch_id,
                             iteration=local_batch_id)
             # update the scheduler
-            self.sigma_scheduler.step()
-            self.lambda_scheduler.step()
+            self.sigma_scheduler.reset(global_batch_id)
+            self.lambda_scheduler.reset(global_batch_id)
         else:
             self.stat.gather(self.device,
                     reconstruction_error=loss["Reconstruction-Error"] / loss["count"], 
