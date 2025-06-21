@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.amp import autocast, GradScaler
 from airsoul.dataloader.prefetch_dataloader import PrefetchDataLoader
 from .tools import Configure, Logger, log_progress, log_debug, log_warn, log_fatal, log_sum_parameters_grad
-from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model
+from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model, custom_save_model
 from .scheduler import noam_scheduler
 
 def EpochManager(cls):
@@ -102,14 +102,14 @@ def EpochManager(cls):
 
         @property
         def get_global_epoch_id(self):
-            if("epochs" in self.training_meta_info):
-                return self.training_meta_info["epochs"]
+            if("epochs" in self.training_metainfo):
+                return self.training_metainfo["epochs"]
             else:
                 return 0
         @property
         def get_global_batch_id(self): 
-            if("steps" in self.training_meta_info):
-                return self.training_meta_info["steps"]
+            if("steps" in self.training_metainfo):
+                return self.training_metainfo["steps"]
             else:
                 return 0
 
@@ -133,11 +133,11 @@ def EpochManager(cls):
         def _preprocess(self):
             if(hasattr(self.computer, 'preprocess')):
                 self.computer.preprocess()
-            if("training_meta_info" in self.__dict__):
-                if("steps" not in self.training_meta_info):
-                    self.training_meta_info["steps"] = 0
-                if("epochs" not in self.training_meta_info):
-                    self.training_meta_info["epochs"] = 0
+            if("training_metainfo" in self.__dict__):
+                if("steps" not in self.training_metainfo):
+                    self.training_metainfo["steps"] = 0
+                if("epochs" not in self.training_metainfo):
+                    self.training_metainfo["epochs"] = 0
             self.init_dataloader()
             self.init_logger()
             self.init_optimizer()
@@ -166,7 +166,10 @@ def EpochManager(cls):
                 manual_sync = False
             data_length = len(self.dataloader)
 
-            done = self.training_meta_info["epochs"] > self.config.max_epochs
+            if("training_metainfo" in self.__dict__ and self.is_training):
+                done = self.training_metainfo["epochs"] > self.config.max_epochs
+            else:
+                done = False
 
             for batch_id, batch_data in enumerate(self.dataloader):
                 # Important: Must reset the model before segment iteration
@@ -189,33 +192,33 @@ def EpochManager(cls):
                     #log_sum_parameters_grad(self.model, self.rank)
                     apply_gradient_safely(self.model, self.optimizer, scaler=self.scaler)
                     self.lr_scheduler.step()
-                    self.training_meta_info["steps"] += 1
+                    self.training_metainfo["steps"] += 1
                 else:
                     self.model.eval()
                     with torch.no_grad():
                         self.computer.compute(
                                   *batch_data, 
-                                  batch_id=batch_id,
-                                  epoch_id=self.training_meta_info["epochs"],
-                                  global_step_id=self.training_meta_info["steps"])
+                                  local_batch_id=batch_id,
+                                  global_batch_id=self.get_global_batch_id,
+                                  global_epoch_id=self.get_global_epoch_id)
 
                 # Emergency Save
                 if(self.emergency_save_check()):
                     log_debug("Emergency save triggered, saving model...")
                     custom_save_model(self.model, self.config.save_model_path,
-                                    self.__class__.__name__, self.training_meta_info,
+                                    self.__class__.__name__, self.training_metainfo,
                                     appendix="emergency")
 
                 # Safety Check and Save
                 need_break = False
                 if(self.is_training and self.config.has_attr("max_save_iterations") 
-                                and acc_iter > self.config.max_save_iterations 
+                                and (self.get_global_batch_id + 1) > self.config.max_save_iterations 
                                 and self.config.max_save_iterations > 0):
                     acc_iter = 0
                     log_debug("\nSAVE MODEL FOR FAIL-SAFETY...\n", on=self.main)
                     if(self.main):
                         custom_save_model(self.model, self.config.save_model_path,
-                                        self.__class__.__name__, self.training_meta_info,
+                                        self.__class__.__name__, self.training_metainfo,
                                         appendix="failsafe")
                     need_break = True
 
@@ -224,14 +227,17 @@ def EpochManager(cls):
 
                 yield need_break, done
 
-            self.training_meta_info["epochs"] += 1
+            self.training_metainfo["epochs"] += 1
             
             # Save At Training Epoch End
             if(self.main and self.is_training):
                 custom_save_model(self.model, self.config.save_model_path,
-                                self.__class__.__name__, self.training_meta_info)
+                                self.__class__.__name__, self.training_metainfo)
 
-            done = self.training_meta_info["epochs"] > self.config.max_epochs
+            if("training_metainfo" in self.__dict__ and self.is_training):
+                done = self.training_metainfo["epochs"] > self.config.max_epochs
+            else:
+                done = False
 
             yield True, done
 
@@ -306,7 +312,7 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                 object_info[key] = value
         train_list.append(train_object(run_name=config.run_name, 
                                         model=model, 
-                                        training_meta_info=object_info,
+                                        training_metainfo=object_info,
                                         config=config.train_config,
                                         log_config=config.log_config,
                                         rank=rank,
@@ -320,13 +326,13 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
 
     evaluate_list = []
     for evaluate_object in evaluate_objects:
-        if(train_object.__name__ not in metainfo):
+        if(evaluate_object.__name__ not in metainfo):
             object_info = dict()
         else:
-            object_info = modelinfo[train_object.__name__]
+            object_info = metainfo[evaluate_object.__name__]
         evaluate_list.append(evaluate_object(run_name=config.run_name, 
                                         model=model, 
-                                        meta_info=object_info,
+                                        training_metainfo=object_info,
                                         config=config.test_config,
                                         log_config=config.log_config,
                                         rank=rank,
