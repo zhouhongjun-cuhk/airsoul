@@ -387,6 +387,9 @@ class Runner(object):
 
         self.use_gpu = torch.cuda.is_available()
         self.world_size = torch.cuda.device_count() if self.use_gpu else os.cpu_count()
+        if "WORLD_SIZE" in os.environ:
+            self.world_size = int(os.environ["WORLD_SIZE"])
+
         if(self.use_gpu):
             log_debug("Use Parallel GPUs: %s" % self.world_size)
         else:
@@ -408,13 +411,19 @@ class Runner(object):
             create_folder(self.config.monitor_dir)
             self.config.to_yaml(f"{self.config.monitor_dir}/config_monitor.yaml")
 
-        if(self.config.has_attr('master_addr')):
-            os.environ['MASTER_ADDR'] = self.config.master_addr
+        if('MASTER_ADDR' in os.environ):
+            log_debug(f"Environment variable MASTER_ADDR is already set, using {os.environ['MASTER_ADDR']}.")
         else:
-            os.environ['MASTER_ADDR'] = 'localhost' 
-
-        os.environ['MASTER_PORT'] = self.config.master_port
-
+            if(self.config.has_attr('master_addr')):
+                os.environ['MASTER_ADDR'] = self.config.master_addr
+            else:
+                os.environ['MASTER_ADDR'] = 'localhost' 
+            log_debug(f"MASTER_ADDR set to {os.environ['MASTER_ADDR']}.")
+        if('MASTER_PORT' in os.environ):
+            log_debug(f"Environment variable MASTER_PORT is already set, using {os.environ['MASTER
+        else:
+            os.environ['MASTER_PORT'] = self.config.master_port
+            log_debug(f"MASTER_PORT set to {os.environ['MASTER_PORT']}.")
 
     def start(self, model_type, train_objects, evaluate_objects, extra_info=None):
         mp.spawn(dist_process,
