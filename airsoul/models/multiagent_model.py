@@ -54,8 +54,9 @@ class OmniRL_MultiAgent(MultiAgentModel):
         idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env -> 6 words
         t tag_value -> t words 
         value of obs, action, and reward ~ [-10, 10], resolution 0.1 -> 200 words
+        off_action_id -> 1 word
         idx_padding -> 1 word
-        Then the total vocabular size = m + n + t + 207
+        Then the total vocabular size = m + n + t + 208
         
 
     - For one timestep the sequence is arranged as: 
@@ -80,11 +81,36 @@ class OmniRL_MultiAgent(MultiAgentModel):
 
         self.nobs = config.nobs
         self.nagent = config.nagent
+        self.ntag = config.ntag
+        self.value_num = config.value_num
         self.default_tag = int(config.default_tag)
+
+        # 6=idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env; 2=off_action_id, idx_padding
+        vocab_size = self.nobs + self.nagent + 6 + self.ntag + self.value_num + 2
+        if not (config.word_embeddings.input_size == config.vocab_size == vocab_size):
+            log_fatal(f"Word embeddings input size {config.word_embeddings.input_size} should be equal to vocab size {config.vocab_size} and {vocab_size}")
+
+        self._init_vocab_offsets()
 
         if(verbose):
             log_debug("RSA Decision Model initialized, total params: {}".format(count_parameters(self)))
             log_debug("Causal Block Parameters: {}".format(count_parameters(self.causal_model)))
+
+    def _init_vocab_offsets(self):
+        self.OBS_IDX_OFFSET = 0
+        self.AGENT_IDX_OFFSET = self.nobs
+        self.SPECIAL_TOKENS_OFFSET = self.AGENT_IDX_OFFSET + self.nagent
+        self.SPECIAL_TOKENS = {
+            'idx_policy': 0,
+            'idx_tag': 1,
+            'idx_a_self': 2,
+            'idx_reward': 3,
+            'idx_end_timestep': 4,
+            'idx_reset_env': 5
+        }
+        self.TAG_BASE = self.SPECIAL_TOKENS_OFFSET + len(self.SPECIAL_TOKENS)
+        self.VALUE_BASE = self.TAG_BASE + self.ntag
+        self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num
 
     def find_position(self, inputs):
         """
@@ -95,14 +121,10 @@ class OmniRL_MultiAgent(MultiAgentModel):
         World Model (reward): value == nobs + nagent + 3; (idx_policy, idx_tag, idx_a_self, idx_reward)
         return world_model_obs_out, world_model_action_out, policy_out, reward_out
         """
-
-        nobs = self.nobs
-        nagent = self.nagent
-
-        world_model_obs_mask = (inputs < nobs)
-        world_model_action_mask = (inputs >= nobs) & (inputs < (nobs + nagent))
-        policy_mask = (inputs == (nobs + nagent))
-        reward_mask = (inputs == (nobs + nagent + 3))
+        world_model_obs_mask = (inputs < self.AGENT_IDX_OFFSET)
+        world_model_action_mask = (inputs >= self.AGENT_IDX_OFFSET) & (inputs < self.SPECIAL_TOKENS_OFFSET)
+        policy_mask = (inputs == self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_policy'])
+        reward_mask = (inputs == (self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_reward']))
 
         return world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask
 
@@ -190,8 +212,27 @@ class OmniRL_MultiAgent(MultiAgentModel):
             output = F.softmax(output, dim=-1)  # [B, NT, D]
             B, NT, D = output.shape
             output = output.view(-1, D)  # [B*NT, D]
-            samples = torch.multinomial(output, num_samples=1)  # [B*NT, 1]
+
+            mask = torch.zeros_like(output, dtype=torch.bool)
+            start_idx = self.VALUE_BASE
+            end_idx = self.VALUE_BASE + self.value_num
+            mask[:, start_idx:end_idx+1] = True
+            masked_output = output * mask
+
+            row_sums = masked_output.sum(dim=1, keepdim=True)
+            zero_mask = (row_sums == 0)
+            if zero_mask.any():
+                uniform_value = 1.0 / D
+                zero_indices = zero_mask.squeeze().nonzero(as_tuple=True)[0]
+                masked_output[zero_indices] = uniform_value
+                masked_output[zero_indices] *= mask
+                row_sums = masked_output.sum(dim=1, keepdim=True)
+                
+
+            normalized_output = masked_output / row_sums
+            samples = torch.multinomial(normalized_output, num_samples=1)  # [B*NT, 1]
             output = samples.view(B, NT)  # [B, NT]
+
             return output
         
         outputs = get_value(outputs)
@@ -213,18 +254,20 @@ class OmniRL_MultiAgent(MultiAgentModel):
             return world_model_obs, world_model_action, action
         else:
             new_value = torch.tensor([
-                [self.nobs + self.nagent + 1, self.default_tag, # idx_tag, tag
-                self.nobs + self.nagent + 2, int(action[i].item()), # idx_a_self, a_self
-                self.nobs + self.nagent + 3] # idx_reward
+                [self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_tag'], self.default_tag, # idx_tag, tag
+                self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_a_self'], int(action[i].item()), # idx_a_self, a_self
+                self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_reward']] # idx_reward
                 for i in range(BT)], dtype=torch.int64, device=inputs.device)
-            policy_idx = self.nobs + self.nagent
+            policy_idx = self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS['idx_policy']
             new_nt = inputs.size(1) + 5
             new_inputs = torch.zeros((BT, new_nt), dtype=torch.int64, device=inputs.device)
             for i in range(BT):
                 pos = torch.where(inputs[i] == policy_idx)[0]
+                assert pos >= 0 and pos < inputs.size(1), f"idle position for policy_idx: {pos}"
                 new_inputs[i, :pos+1] = inputs[i, :pos+1]
                 new_inputs[i, pos+1:pos+6] = new_value[i]
-                new_inputs[i, pos+6:] = inputs[i, pos+1:]
+                if pos < inputs.size(1) -1:
+                    new_inputs[i, pos+6:] = inputs[i, pos+1:]
             outputs, _ = self.forward(new_inputs, need_cache=False, update_memory=False)
             outputs = get_value(outputs)
             _, _, _, reward_mask = self.find_position(new_inputs)
