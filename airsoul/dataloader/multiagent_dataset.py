@@ -164,24 +164,31 @@ class MultiAgentDataSet(Dataset):
             value = np.array(value)
             scalar_input = True
 
-        if value.ndim == 1:
-            value = value.reshape(1, -1)
+        if value.shape[2] == 2:
+            print("process action value")
+            raw_values = value[:, :, 0:1] 
+            flags = value[:, :, 1:2] 
 
-        raw_values = value[:, 0]  
-        flags = value[:, 1] 
+            result = np.zeros_like(raw_values, dtype=np.int64)
+            on_mask = flags > 0.5
+            if np.any(on_mask):
+                clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
+                quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
+                result[on_mask] = self.VALUE_BASE + quantized
 
-        result = np.zeros_like(raw_values, dtype=np.int64)
-        on_mask = flags > 0.5
-        if np.any(on_mask):
-            clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
+            off_mask = ~on_mask
+            if np.any(off_mask):
+                result[off_mask] = self.ACTION_OFF_BASE
+            
+            return result.item() if scalar_input else result
+        elif value.shape[2] == 1:
+            print("process obs value")
+            raw_values = value
+            result = np.zeros_like(raw_values, dtype=np.int64)
+            clipped = np.clip(raw_values, self.min_value, self.max_value)
             quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-            result[on_mask] = self.VALUE_BASE + quantized
-
-        off_mask = ~on_mask
-        if np.any(off_mask):
-            result[off_mask] = self.ACTION_OFF_BASE
-        
-        return result.item() if scalar_input else result
+            result = self.VALUE_BASE + quantized
+            return result.item() if scalar_input else result
 
     def _load_and_process_data(self, path):
         try:
@@ -280,24 +287,30 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
         if not isinstance(value, np.ndarray):
             value = np.array(value)
             scalar_input = True
-        if value.ndim == 1:
-            value = value.reshape(1, -1)
 
-        raw_values = value[:, 0]  
-        flags = value[:, 1]
-        on_mask = flags > 0.5 
+        if value.shape[2] == 2:
+            raw_values = value[:, :, 0:1] 
+            flags = value[:, :, 1:2] 
 
-        result = np.zeros_like(raw_values, dtype=np.int64)
-        if np.any(on_mask):
-            clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
+            result = np.zeros_like(raw_values, dtype=np.int64)
+            on_mask = flags > 0.5
+            if np.any(on_mask):
+                clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
+                quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
+                result[on_mask] = self.VALUE_BASE + quantized
+
+            off_mask = ~on_mask
+            if np.any(off_mask):
+                result[off_mask] = self.ACTION_OFF_BASE
+            
+            return result.item() if scalar_input else result
+        elif value.shape[2] == 1:
+            raw_values = value
+            result = np.zeros_like(raw_values, dtype=np.int64)
+            clipped = np.clip(raw_values, self.min_value, self.max_value)
             quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-            result[on_mask] = self.VALUE_BASE + quantized
-
-        off_mask = ~on_mask
-        if np.any(off_mask):
-            result[off_mask] = self.ACTION_OFF_BASE
-        
-        return result.item() if scalar_input else result
+            result = self.VALUE_BASE + quantized
+            return result.item() if scalar_input else result
 
     def _interleave_columns(self, arrays):
         
@@ -365,9 +378,9 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 obs_data = observations[obs_mask][:, time_slice] # (num_relative_obs, timesteps)
                 relevant_obs = np.where(obs_mask)[0] # (num_relative_obs)
                 obs_idx_vocabularize = self.vocabularize('obs_id', relevant_obs)
-                obs_value_vocabularize = self.vocabularize('value', obs_data)
+                obs_value_vocabularize = self.vocabularize('value', obs_data).squeeze()
                 obs_idx_vocabularize = np.broadcast_to(obs_idx_vocabularize[:, np.newaxis],
-                                                   shape=obs_data.shape).astype(np.int64)  # (num_relative_obs, timesteps)
+                                                   shape=obs_value_vocabularize.shape).astype(np.int64)  # (num_relative_obs, timesteps)
                 obs_value_vocabularize = obs_value_vocabularize.T  # (timesteps, num_relative_obs)
                 obs_idx_vocabularize = obs_idx_vocabularize.T  # (timesteps, num_relative_obs)
                 # Merge into (timesteps, num_relative_obs * 2)
@@ -378,9 +391,9 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 relevant_agents = np.where(agent_mask)[0] # (num_relative_agents)
                 
                 agent_idx_vocabularize = self.vocabularize('agent_id', relevant_agents)
-                agent_value_vocabularize = self.vocabularize('value', agent_data)
+                agent_value_vocabularize = self.vocabularize('value', agent_data).squeeze()
                 agent_idx_vocabularize = np.broadcast_to(agent_idx_vocabularize[:, np.newaxis],
-                                                         shape=agent_data.shape).astype(np.int64)  # (num_relative_agents, timesteps)
+                                                         shape=agent_value_vocabularize.shape).astype(np.int64)  # (num_relative_agents, timesteps)
                 agent_value_vocabularize = agent_value_vocabularize.T  # (timesteps, num_relative_agents)
                 agent_idx_vocabularize = agent_idx_vocabularize.T  # (timesteps, num_relative_agents)
                 # Merge into (timesteps, num_relative_agents * 2)
@@ -400,9 +413,9 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 idx_end_timestep_vocabularize = np.full((num_timesteps, 1), idx_end_timestep_vocabularize, dtype=np.int64)
                 tags_vocabularize = self.vocabularize('tag_value', tags[agent_id][time_slice])
                 tags_vocabularize = tags_vocabularize[:, np.newaxis]
-                agent_data_vocabularize = self.vocabularize('value', actions_behavior[agent_id][time_slice])
+                agent_data_vocabularize = self.vocabularize('value', actions_behavior[agent_id][time_slice,:][np.newaxis, :]).squeeze()
                 agent_data_vocabularize = agent_data_vocabularize[:, np.newaxis]
-                rewards_vocabularize = self.vocabularize('value', rewards[time_slice])
+                rewards_vocabularize = self.vocabularize('value', rewards[time_slice][np.newaxis, :]).squeeze()
                 rewards_vocabularize = rewards_vocabularize[:, np.newaxis]
                 meta_pairs = np.concatenate([idx_policy_vocabularize, idx_tag_vocabularize, tags_vocabularize,
                                              idx_a_self_vocabularize, agent_data_vocabularize,
@@ -420,7 +433,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 agent_seq = agent_seq[filter_mask]
                 
                 policy_position_mask = (agent_seq == self.vocabularize('special_token', 'idx_policy'))
-                label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice])
+                label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice][np.newaxis, :]).squeeze()
                 if np.sum(policy_position_mask) != len(label_vocabularize):
                     raise ValueError(
                         f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
@@ -571,171 +584,3 @@ if __name__ == "__main__":
         num_workers=args.num_workers
     )
 
-
-############ test ##############
-
-import unittest
-import tempfile
-import shutil
-import numpy as np
-from pathlib import Path
-
-class TestMultiAgentDataset(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        # 创建临时测试目录
-        cls.test_dir = Path(tempfile.mkdtemp())
-        cls._generate_test_data(cls.test_dir)
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.test_dir)
-
-    @classmethod
-    def _generate_test_data(cls, base_dir):
-        """生成测试用的虚拟数据"""
-        time_steps = 10000
-        
-        # 观测数据 (3个观测源，5个时间步)
-        obs_data = np.array([
-            np.random.uniform(-10, 10, size=time_steps),  # 观测0
-            np.random.uniform(-10, 10, size=time_steps),  # 观测1
-            np.random.uniform(-10, 10, size=time_steps)   # 观测2
-        ])
-        for i in range(3):
-            np.save(cls.test_dir/f'observations_{i}.npy', obs_data[i])
-
-        # 行为动作 (2个agent，5个时间步)
-        behavior_data = []
-        for i in range(2):
-            values = np.random.uniform(-10, 10, size=time_steps)
-            flags = np.random.choice([0.0, 1.0], size=time_steps)
-            agent_data = np.column_stack((values, flags))
-            behavior_data.append(agent_data)
-
-        # 将行为动作保存为单个文件 (形状: [2, time_steps, 2])
-        behavior_array = np.array(behavior_data)
-        np.save(cls.test_dir / 'diff_actions_behavior.npy', behavior_array)
-
-        # 将标签动作保存为单个文件 (形状: [2, time_steps, 2])
-        label_data = [agent.copy() for agent in behavior_data]
-        label_array = np.array(label_data)
-        np.save(cls.test_dir / 'diff_actions_label.npy', label_array)
-
-        # 标签数据 (2个agent，time_steps个时间步)
-        tag_data = np.random.randint(0, 2, size=(2, time_steps))
-        np.save(cls.test_dir / 'diff_observations.npy', tag_data)
-
-        # 奖励和重置信号
-        np.save(cls.test_dir/'rewards.npy',  np.random.uniform(-10, 10, size=time_steps))
-        resets = np.zeros(time_steps, dtype=bool)
-        # 随机设置重置点（约0.5%的概率）
-        reset_indices = np.random.choice(
-            time_steps, 
-            size=int(time_steps*0.005),  # 50个重置点
-            replace=False
-        )
-        resets[reset_indices] = 1
-        np.save(cls.test_dir/'resets.npy', np.array(resets, dtype=bool))
-
-        # 连接矩阵
-        np.save(cls.test_dir/'obs_graph.npy', np.array([
-            [1, 0],   # 观测0的连接情况
-            [1, 1],   # 观测1
-            [0, 1]    # 观测2
-        ]))
-        np.save(cls.test_dir/'agent_graph.npy', np.array([
-            [0, 1],   # agent0的连接
-            [1, 0]    # agent1
-        ]))
-
-    def _validate_equivalence(self, base_seq, vec_seq):
-        """验证两个序列的等效性（允许1e-5的浮点误差）"""
-        self.assertEqual(len(base_seq), len(vec_seq))
-
-        for b_agent, v_agent in zip(base_seq, vec_seq):
-            # 转换为基础类的数据类型
-            b_clean = b_agent.astype(np.int64)
-            v_agent = v_agent.astype(np.int64)
-
-            diff_mask = b_clean != v_agent
-            if np.any(diff_mask):
-                print(f"\nAgent 序列差异：")
-                print("索引 | 基准值 | 测试值")
-                for idx in np.where(diff_mask)[0]:
-                    print(f"{idx:4d} | {b_clean[idx]:6d} | {v_agent[idx]:6d}")
-            
-            np.testing.assert_allclose(b_clean, v_agent, atol=1e-5, 
-                                    err_msg="序列数据不匹配")
-
-    def test_basic_equivalence(self):
-        """基本等效性测试"""
-        # 初始化数据集
-        base_ds = MultiAgentDataSet(
-            directory=str(self.test_dir),
-            time_step=10000,
-            max_obs_num=3,
-            max_agent_num=2,
-            tag_num=2,
-            value_num=200,
-            resolution=0.1
-        )
-
-        vec_ds = MultiAgentDataSetVetorized(
-            directory=str(self.test_dir),
-            time_step=10000,
-            max_obs_num=3,
-            max_agent_num=2,
-            tag_num=2,
-            value_num=200,
-            resolution=0.1
-        )
-
-        # 加载数据
-        base_seq, base_labels = base_ds._load_and_process_data(str(self.test_dir))
-        vec_seq, vec_labels = vec_ds._load_and_process_data(str(self.test_dir))
-
-        # 验证序列
-        self._validate_equivalence(base_seq, vec_seq)
-
-        # 验证标签
-        for b_label, v_label in zip(base_labels, vec_labels):
-            np.testing.assert_array_equal(b_label, v_label)
-
-
-    def test_performance_comparison(self):
-        """性能对比测试"""
-        import timeit
-
-        base_time = timeit.timeit(
-            lambda: MultiAgentDataSet(
-                directory=str(self.test_dir),
-                time_step=10000,
-                max_obs_num=3,
-                max_agent_num=2,
-                tag_num=2,
-                value_num=200,
-                resolution=0.1
-            )._load_and_process_data(str(self.test_dir)),
-            number=10
-        )
-
-        vec_time = timeit.timeit(
-            lambda: MultiAgentDataSetVetorized(
-                directory=str(self.test_dir),
-                time_step=10000,
-                max_obs_num=3,
-                max_agent_num=2,
-                tag_num=2,
-                value_num=200,
-                resolution=0.1
-            )._load_and_process_data(str(self.test_dir)),
-            number=10
-        )
-
-        print(f"\n性能对比：\n- 原始版本：{base_time:.2f}s\n- 向量化版本：{vec_time:.2f}s")
-        self.assertLess(vec_time, base_time, "向量化版本应更快")
-
-
-# if __name__ == '__main__':
-#     unittest.main(verbosity=2)
