@@ -175,7 +175,7 @@ model_config:
       inner_hidden_size: 1024
       dropout: 0.10
       nhead: 8
-      expend_v: 1 # default 2
+      expand_v: 1 # default 2
       use_layer_norm: True
       use_blockrecurrence: True
       checkpoints_density: -1
@@ -194,6 +194,21 @@ model_config:
       d_state: 16
       dropout: 0.10
       position_encoding_size: 12000
+      use_layer_norm: True
+      use_blockrecurrence: True
+      checkpoints_density: -1
+      memory_length: 0
+      memory_type: MEM
+      is_frozen: False
+
+  causal_block_bak_7:
+      model_type: Mamba2
+      num_layers: 12
+      hidden_size: 512
+      inner_hidden_size: 1024
+      dropout: 0.10
+      nhead: 8
+      use_segment_input: True
       use_layer_norm: True
       use_blockrecurrence: True
       checkpoints_density: -1
