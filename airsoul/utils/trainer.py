@@ -17,6 +17,14 @@ from .tools import Configure, Logger, log_progress, log_debug, log_warn, log_fat
 from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model, custom_save_model
 from .scheduler import noam_scheduler
 
+def is_multi_node():
+    # 检查NODE_RANK（torchrun多机时设置）
+    node_rank = os.environ.get('NODE_RANK')
+    if node_rank is not None:
+        return True  # 有NODE_RANK说明是多机 
+    return False
+
+
 def EpochManager(cls):
     @wraps(cls, updated=())
     class WrapperEpochManager(object):
@@ -247,11 +255,18 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                 model_type, train_objects, evaluate_objects, extra_info):
     """
     """
+    local_rank = int(os.environ["LOCAL_RANK"])
     if use_gpu:
-        torch.cuda.set_device(rank)  # Set the current GPU to be used
-        device = torch.device(f'cuda:{rank}')
-        device_type = 'cuda'
-        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        if is_multi_node():
+            torch.cuda.set_device(local_rank)
+            device = torch.device(f'cuda:{local_rank}')
+            device_type = 'cuda'
+            dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        else:
+            torch.cuda.set_device(rank)  # Set the current GPU to be used
+            device = torch.device(f'cuda:{rank}')
+            device_type = 'cuda'
+            dist.init_process_group("nccl", rank=rank, world_size=world_size)
     else:
         device = torch.device('cpu')
         device_type = 'cpu'
@@ -272,7 +287,11 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     model = model.to(device)
 
     if use_gpu:
-        model = DDP(model, device_ids=[rank])
+        if is_multi_node():
+            # If using multiple nodes, we need to specify the device_ids
+            model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        else:
+            model = DDP(model, device_ids=[rank])
     else:
         model = DDP(model)
 
@@ -407,33 +426,51 @@ class Runner(object):
         
         print("Final configuration:\n", self.config)
 
-        if(self.config.has_attr('monitor_dir')):
-            create_folder(self.config.monitor_dir)
-            self.config.to_yaml(f"{self.config.monitor_dir}/config_monitor.yaml")
+        if not is_multi_node():
+            if(self.config.has_attr('monitor_dir')):
+                create_folder(self.config.monitor_dir)
+                self.config.to_yaml(f"{self.config.monitor_dir}/config_monitor.yaml")
 
-        if('MASTER_ADDR' in os.environ):
-            log_debug(f"Environment variable MASTER_ADDR is already set, using {os.environ['MASTER_ADDR']}.")
-        else:
-            if(self.config.has_attr('master_addr')):
-                os.environ['MASTER_ADDR'] = self.config.master_addr
+            if('MASTER_ADDR' in os.environ):
+                log_debug(f"Environment variable MASTER_ADDR is already set, using {os.environ['MASTER_ADDR']}.")
             else:
-                os.environ['MASTER_ADDR'] = 'localhost' 
-            log_debug(f"MASTER_ADDR set to {os.environ['MASTER_ADDR']}.")
-        if('MASTER_PORT' in os.environ):
-            log_debug(f"Environment variable MASTER_PORT is already set, using {os.environ['MASTER
-        else:
-            os.environ['MASTER_PORT'] = self.config.master_port
-            log_debug(f"MASTER_PORT set to {os.environ['MASTER_PORT']}.")
+                if(self.config.has_attr('master_addr')):
+                    os.environ['MASTER_ADDR'] = self.config.master_addr
+                else:
+                    os.environ['MASTER_ADDR'] = 'localhost' 
+                log_debug(f"MASTER_ADDR set to {os.environ['MASTER_ADDR']}.")
+            if('MASTER_PORT' in os.environ):
+                log_debug(f"Environment variable MASTER_PORT is already set, using {os.environ['MASTER_PORT']}.")
+            else:
+                os.environ['MASTER_PORT'] = self.config.master_port
+                log_debug(f"MASTER_PORT set to {os.environ['MASTER_PORT']}.")
 
     def start(self, model_type, train_objects, evaluate_objects, extra_info=None):
-        mp.spawn(dist_process,
-                args=(self.use_gpu, 
-                      self.world_size, 
-                      self.config, 
-                      0, # always use #0 as the main GPU
-                      model_type,
-                      train_objects, 
-                      evaluate_objects,
-                      extra_info),
-                nprocs=self.world_size if self.use_gpu else min(self.world_size, 4),  # Limit CPU processes if desired
-                join=True)
+
+        if is_multi_node():
+            rank = int(os.environ["RANK"])
+            local_rank = int(os.environ["LOCAL_RANK"])
+            world_size = int(os.environ["WORLD_SIZE"])
+            dist_process(
+                rank=rank,
+                use_gpu=self.use_gpu,
+                world_size=world_size,
+                config=self.config,
+                main_rank=0,  # 可保留或去掉此逻辑
+                model_type=model_type,
+                train_objects=train_objects,
+                evaluate_objects=evaluate_objects,
+                extra_info=extra_info
+            )
+        else:
+            mp.spawn(dist_process,
+                    args=(self.use_gpu, 
+                        self.world_size, 
+                        self.config, 
+                        0, # always use #0 as the main GPU
+                        model_type,
+                        train_objects, 
+                        evaluate_objects,
+                        extra_info),
+                    nprocs=self.world_size if self.use_gpu else min(self.world_size, 4),  # Limit CPU processes if desired
+                    join=True)
