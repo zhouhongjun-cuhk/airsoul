@@ -53,10 +53,10 @@ class OmniRL_MultiAgent(MultiAgentModel):
     - i.e., we have m obs_id, n action_id -> m + n words
         idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env -> 6 words
         t tag_value -> t words 
-        value of obs, action, and reward ~ [-10, 10], resolution 0.1 -> 200 words
+        value of obs, action, and reward ~ [-15, 15], resolution 0.1 -> 300 words + 2 upper and lower words = 302 words
         off_action_id -> 1 word
         idx_padding -> 1 word
-        Then the total vocabular size = m + n + t + 208
+        Then the total vocabular size = m + n + t + 310
         
 
     - For one timestep the sequence is arranged as: 
@@ -110,7 +110,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
         }
         self.TAG_BASE = self.SPECIAL_TOKENS_OFFSET + len(self.SPECIAL_TOKENS)
         self.VALUE_BASE = self.TAG_BASE + self.ntag
-        self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num
+        self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num + 2
 
     def find_position(self, inputs):
         """

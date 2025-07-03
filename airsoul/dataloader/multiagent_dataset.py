@@ -127,7 +127,9 @@ class MultiAgentDataSet(Dataset):
         return len(self.file_list)
 
     def _init_vocab_offsets(self):
-        self.BASE_OFFSET = self.max_obs_num + self.max_agent_num
+        self.OBS_IDX_OFFSET = 0
+        self.AGENT_IDX_OFFSET = self.max_obs_num
+        self.SPECIAL_TOKENS_OFFSET = self.AGENT_IDX_OFFSET + self.max_agent_num
         self.SPECIAL_TOKENS = {
             'idx_policy': 0,
             'idx_tag': 1,
@@ -136,9 +138,9 @@ class MultiAgentDataSet(Dataset):
             'idx_end_timestep': 4,
             'idx_reset_env': 5
         }
-        self.TAG_BASE = self.BASE_OFFSET + len(self.SPECIAL_TOKENS)
+        self.TAG_BASE = self.SPECIAL_TOKENS_OFFSET + len(self.SPECIAL_TOKENS)
         self.VALUE_BASE = self.TAG_BASE + self.tag_num
-        self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num
+        self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num + 2 # 2: lower and upper value
 
     def vocabularize(self, type, value):
         handler = getattr(self, f'_handle_{type}', None)
@@ -150,10 +152,10 @@ class MultiAgentDataSet(Dataset):
         return value
 
     def _handle_agent_id(self, value):
-        return self.max_obs_num + value
+        return self.AGENT_IDX_OFFSET + value
 
     def _handle_special_token(self, token_type):
-        return self.BASE_OFFSET + self.SPECIAL_TOKENS[token_type]
+        return self.SPECIAL_TOKENS_OFFSET + self.SPECIAL_TOKENS[token_type]
 
     def _handle_tag_value(self, value):
         return self.TAG_BASE + value
@@ -165,29 +167,46 @@ class MultiAgentDataSet(Dataset):
             scalar_input = True
 
         if value.shape[2] == 2:
-            print("process action value")
             raw_values = value[:, :, 0:1] 
             flags = value[:, :, 1:2] 
 
             result = np.zeros_like(raw_values, dtype=np.int64)
             on_mask = flags > 0.5
-            if np.any(on_mask):
-                clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
-                quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-                result[on_mask] = self.VALUE_BASE + quantized
-
             off_mask = ~on_mask
+            if np.any(on_mask):
+                on_values = raw_values[on_mask]
+                below_min = on_values < self.min_value
+                above_max = on_values > self.max_value
+                in_range = ~(below_min | above_max)
+                temp_result = np.zeros_like(on_values, dtype=np.int64)
+                if np.any(below_min):
+                    temp_result[below_min] = self.VALUE_BASE
+                if np.any(above_max):
+                    temp_result[above_max] = self.VALUE_BASE + self.value_num + 1
+                if np.any(in_range):
+                    clipped = np.clip(on_values[in_range], self.min_value, self.max_value)
+                    quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
+                    temp_result[in_range] = self.VALUE_BASE + quantized + 1
+                result[on_mask] = temp_result
+
             if np.any(off_mask):
                 result[off_mask] = self.ACTION_OFF_BASE
             
             return result.item() if scalar_input else result
         elif value.shape[2] == 1:
-            print("process obs value")
             raw_values = value
             result = np.zeros_like(raw_values, dtype=np.int64)
-            clipped = np.clip(raw_values, self.min_value, self.max_value)
-            quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-            result = self.VALUE_BASE + quantized
+            below_min = raw_values < self.min_value
+            above_max = raw_values > self.max_value
+            in_range = ~(below_min | above_max)
+            if np.any(below_min):
+                result[below_min] = self.VALUE_BASE
+            if np.any(above_max):
+                result[above_max] = self.VALUE_BASE + self.value_num + 1
+            if np.any(in_range):
+                clipped = np.clip(raw_values[in_range], self.min_value, self.max_value)
+                quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
+                result[in_range] = self.VALUE_BASE + quantized + 1
             return result.item() if scalar_input else result
 
     def _load_and_process_data(self, path):
@@ -277,40 +296,10 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
         return value.astype(np.int64) if isinstance(value, np.ndarray) else int(value)
 
     def _handle_agent_id(self, value):
-        return (self.max_obs_num + value).astype(np.int64) if isinstance(value, np.ndarray) else self.max_obs_num + value
+        return (self.AGENT_IDX_OFFSET + value).astype(np.int64) if isinstance(value, np.ndarray) else self.AGENT_IDX_OFFSET + value
 
     def _handle_tag_value(self, value):
         return (self.TAG_BASE + value).astype(np.int64) if isinstance(value, np.ndarray) else self.TAG_BASE + value
-
-    def _handle_value(self, value):
-        scalar_input = False
-        if not isinstance(value, np.ndarray):
-            value = np.array(value)
-            scalar_input = True
-
-        if value.shape[2] == 2:
-            raw_values = value[:, :, 0:1] 
-            flags = value[:, :, 1:2] 
-
-            result = np.zeros_like(raw_values, dtype=np.int64)
-            on_mask = flags > 0.5
-            if np.any(on_mask):
-                clipped = np.clip(raw_values[on_mask], self.min_value, self.max_value)
-                quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-                result[on_mask] = self.VALUE_BASE + quantized
-
-            off_mask = ~on_mask
-            if np.any(off_mask):
-                result[off_mask] = self.ACTION_OFF_BASE
-            
-            return result.item() if scalar_input else result
-        elif value.shape[2] == 1:
-            raw_values = value
-            result = np.zeros_like(raw_values, dtype=np.int64)
-            clipped = np.clip(raw_values, self.min_value, self.max_value)
-            quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
-            result = self.VALUE_BASE + quantized
-            return result.item() if scalar_input else result
 
     def _interleave_columns(self, arrays):
         
