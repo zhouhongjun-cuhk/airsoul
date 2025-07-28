@@ -1,12 +1,17 @@
 import os
 import torch
 import numpy
+import pickle
 
 from airsoul.dataloader import segment_iterator
 from airsoul.utils import Logger, log_progress, log_debug, log_warn, log_fatal
 from airsoul.utils import DistStatistics, downsample
 from airsoul.utils import EpochManager, GeneratorBase, Logger
 from airsoul.dataloader import MultiAgentLoadDateSet
+
+from xenoverse.anyhvacv2.anyhvac_sampler import HVACTaskSampler
+from xenoverse.anyhvacv2.anyhvac_env_vis import HVACEnvVisible, HVACEnv
+from xenoverse.anyhvacv2.anyhvac_solver import HVACSolverGTPID
 
 def string_mean_var(downsample_length, res):
     string=""
@@ -92,7 +97,7 @@ class HVACEpoch:
                     loss_worldmodel_state = loss["wm_obs"] / loss["count_s"],
                     loss_worldmodel_other_agent = loss["wm_agent"] / loss["count_a"],
                     loss_worldmodel_reward = loss["reward"] / loss["count_p"],
-                    loss_policymodel = loss["pm"] / loss["count_p"],
+                    loss_policymodel = loss["policy"] / loss["count_p"],
                     entropy = -loss["ent"] / loss["count_p"],
                     count = loss["count_p"])
                 
@@ -112,9 +117,9 @@ class HVACEpoch:
                     for loss in losses], dim=1)
             loss_wm_a = torch.cat([loss["wm_agent"] / torch.clamp_min(loss["count_a"], 1.0e-3) 
                     for loss in losses], dim=1)
-            loss_wm_r = torch.cat([loss["wm-r"] / torch.clamp_min(loss["count_p"], 1.0e-3) 
+            loss_wm_r = torch.cat([loss["reward"] / torch.clamp_min(loss["count_p"], 1.0e-3) 
                     for loss in losses], dim=1)
-            loss_pm = torch.cat([loss["pm"] / torch.clamp_min(loss["count_p"], 1.0e-3) 
+            loss_pm = torch.cat([loss["policy"] / torch.clamp_min(loss["count_p"], 1.0e-3) 
                     for loss in losses], dim=1)
             loss_ent = torch.cat([-loss["ent"] / torch.clamp_min(loss["count_p"], 1.0e-3) 
                     for loss in losses], dim=1)
@@ -159,3 +164,4 @@ class HVACEpoch:
                             os.remove(file_path)
                         with open(file_path, 'w') as f_model:
                             f_model.write(res_text)
+
