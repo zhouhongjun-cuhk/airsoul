@@ -169,9 +169,10 @@ train_config:
     state_dropout: 0.0
     reward_dropout: 0.0
 
-    lossweight_policymodel: 0.2
-    lossweight_worldmodel_states: 0.4
-    lossweight_worldmodel_rewards: 0.4
+    lossweight_policymodel: 0.75
+    lossweight_worldmodel_states: 0.15
+    lossweight_worldmodel_actions: 0.05
+    lossweight_worldmodel_rewards: 0.05
     lossweight_entropy: 0.0
     lossweight_l2: 0.0
 

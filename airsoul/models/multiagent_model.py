@@ -22,7 +22,7 @@ class MultiAgentModel(nn.Module):
 
         self.nvocab = config.vocab_size
         
-        self.encoder = CausalBlock(config.causal_block)
+        self.causal_model = CausalBlock(config.causal_block)
 
         self.output_mapping = ResidualMLPDecoder(config.output_layers)
 
@@ -37,14 +37,14 @@ class MultiAgentModel(nn.Module):
 
         outputs = self.word_emb(inputs)
 
-        outputs, new_cache = self.encoder(outputs, cache=cache, need_cache=need_cache, update_memory=update_memory)
+        outputs, new_cache = self.causal_model(outputs, cache=cache, need_cache=need_cache, update_memory=update_memory)
 
         outputs = self.output_mapping(outputs, T=T)
 
         return outputs, new_cache
     
     def reset(self):
-        self.encoder.reset()
+        self.causal_model.reset()
 
 class OmniRL_MultiAgent(MultiAgentModel):
     """
@@ -75,7 +75,7 @@ class OmniRL_MultiAgent(MultiAgentModel):
 
         loss_weight = torch.cat((
                 torch.linspace(0.0, 1.0, config.context_warmup),
-                torch.full((config.max_position - config.context_warmup,), 1.0)), dim=0)
+                torch.full((config.max_position_loss_weighting - config.context_warmup,), 1.0)), dim=0)
         loss_weight = loss_weight / torch.sum(loss_weight)
         self.register_buffer('loss_weight', loss_weight)
 
@@ -85,8 +85,9 @@ class OmniRL_MultiAgent(MultiAgentModel):
         self.value_num = config.value_num
         self.default_tag = int(config.default_tag)
 
-        # 6=idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env; 2=off_action_id, idx_padding
-        vocab_size = self.nobs + self.nagent + 6 + self.ntag + self.value_num + 2
+        # 6=idx_policy, idx_tag, idx_a_self, idx_reward, idx_end_timestep, idx_reset_env; 
+        # 2=value blow botom bound and value above upper bound; 2=off_action_id, idx_padding
+        vocab_size = self.nobs + self.nagent + 6 + self.ntag + self.value_num + 2 + 2
         if not (config.word_embeddings.input_size == config.vocab_size == vocab_size):
             log_fatal(f"Word embeddings input size {config.word_embeddings.input_size} should be equal to vocab size {config.vocab_size} and {vocab_size}")
 
@@ -133,8 +134,8 @@ class OmniRL_MultiAgent(MultiAgentModel):
         label_actions should have same shape as inputs, and replace the idx_policy with label action.
         """
         seq_len = inputs.shape[1]
-        ps = self.encoder.position
-        pe = ps + seq_len
+        ps = self.causal_model.position
+        pe = ps + seq_len - 1
         if(self.loss_weight.shape[0] < pe):
             log_fatal(f"Loss weight (shape {self.loss_weight.shape[0]}) should be longer" +
                     f" than sequence length {pe}")
@@ -144,10 +145,10 @@ class OmniRL_MultiAgent(MultiAgentModel):
         world_model_obs_mask, world_model_action_mask, policy_mask, reward_mask = self.find_position(inputs[:,:-1])
     
         
-        loss_weight_wm_obs = world_model_obs_mask
-        loss_weight_wm_action = world_model_action_mask
-        loss_weight_policy = policy_mask
-        loss_weight_reward = reward_mask
+        loss_weight_wm_obs = world_model_obs_mask.float()
+        loss_weight_wm_action = world_model_action_mask.float()
+        loss_weight_policy = policy_mask.float()
+        loss_weight_reward = reward_mask.float()
         if use_loss_weight:
             loss_weight_wm_obs *= self.loss_weight[ps:pe].unsqueeze(0)
             loss_weight_wm_action *= self.loss_weight[ps:pe].unsqueeze(0)
@@ -208,15 +209,15 @@ class OmniRL_MultiAgent(MultiAgentModel):
         BT = inputs.size(0)
         outputs, _ = self.forward(inputs, need_cache=False, update_memory=False)
         
-        def get_value(output):
+        def get_value(output): 
             output = F.softmax(output, dim=-1)  # [B, NT, D]
             B, NT, D = output.shape
             output = output.view(-1, D)  # [B*NT, D]
 
             mask = torch.zeros_like(output, dtype=torch.bool)
             start_idx = self.VALUE_BASE
-            end_idx = self.VALUE_BASE + self.value_num
-            mask[:, start_idx:end_idx+1] = True
+            end_idx = self.VALUE_BASE + self.value_num + 2 # upper and lower value take two tokens
+            mask[:, start_idx:end_idx] = True
             masked_output = output * mask
 
             row_sums = masked_output.sum(dim=1, keepdim=True)

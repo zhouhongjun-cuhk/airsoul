@@ -35,8 +35,8 @@ class MultiAgentLoadDateSet(Dataset):
 
     def _load_and_process_data(self, path):
         try:
-            sequence = np.load(path + 'sequence.npy')
-            label_action = np.load(path + 'label_action.npy')
+            sequence = np.load(path + '/sequence.npy')
+            label_action = np.load(path + '/label_action.npy')
 
             max_t = min(sequence.shape[0], 
                         label_action.shape[0])
@@ -95,7 +95,7 @@ class MultiAgentDataSet(Dataset):
     - The data is save as observations_*.npy, actions_behavior_*.npy, actions_behavior_*.npy, tags_*.npy, rewards.npy
         The sequential data is constructed base on two connection matrix above as each time steps, and each agent can form a sequence.
     """
-    def __init__(self, directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, verbose=False):
+    def __init__(self, directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, vocab_size, verbose=False):
         if(verbose):
             print("\nInitializing data set from file: %s..." % directory)
         self.file_list = []
@@ -113,6 +113,7 @@ class MultiAgentDataSet(Dataset):
         self.max_agent_num = max_agent_num
         self.tag_num = tag_num
         self.resolution = resolution
+        self.vocab_size = vocab_size
         self.min_value = - resolution * value_num / 2
         self.max_value = - self.min_value
         self.value_num = value_num
@@ -142,10 +143,13 @@ class MultiAgentDataSet(Dataset):
         self.VALUE_BASE = self.TAG_BASE + self.tag_num
         self.ACTION_OFF_BASE = self.VALUE_BASE + self.value_num + 2 # 2: lower and upper value
 
-    def vocabularize(self, type, value):
+    def vocabularize(self, type, value, behavior_value=None):
         handler = getattr(self, f'_handle_{type}', None)
         if handler:
-            return handler(value)
+            if behavior_value is not None:
+                return handler(value,behavior_value)
+            else:
+                return handler(value)
         raise ValueError(f"Invalid type: {type}")
 
     def _handle_obs_id(self, value):
@@ -160,7 +164,7 @@ class MultiAgentDataSet(Dataset):
     def _handle_tag_value(self, value):
         return self.TAG_BASE + value
 
-    def _handle_value(self, value):
+    def _handle_value(self, value, behavior_value = None, use_diff_action = True):
         scalar_input = False
         if not isinstance(value, np.ndarray):
             value = np.array(value)
@@ -175,6 +179,21 @@ class MultiAgentDataSet(Dataset):
             off_mask = ~on_mask
             if np.any(on_mask):
                 on_values = raw_values[on_mask]
+                if use_diff_action:
+                    if behavior_value is None:
+                        diff_values = np.zeros_like(on_values)
+                        diff_values[0] = on_values[0]
+                        diff_values[1:] = on_values[1:] - on_values[:-1]
+                        on_values = diff_values
+                    else:
+                        raw_values_behavior = behavior_value[:, :, 0:1][on_mask] 
+                        flags_behavior = behavior_value[:, :, 1:2][on_mask]
+                        behavior_off_mask = flags_behavior < 0.5
+                        diff_values = np.zeros_like(on_values)
+                        diff_values[0] = on_values[0]
+                        diff_values[1:] = on_values[1:] - raw_values_behavior[:-1]
+                        diff_values[behavior_off_mask] = on_values[behavior_off_mask]
+
                 below_min = on_values < self.min_value
                 above_max = on_values > self.max_value
                 in_range = ~(below_min | above_max)
@@ -271,13 +290,13 @@ class MultiAgentDataSet(Dataset):
                 agent_sequence = np.concatenate(agent_sequence)
 
                 policy_position_mask = (agent_sequence == self.vocabularize('special_token', 'idx_policy'))
-                label_vocabularize = self.vocabularize('value', actions_label[agent_id][n_b:n_e])
+                label_vocabularize = self.vocabularize('value', actions_label[agent_id][n_b:n_e], )
                 if np.sum(policy_position_mask) != len(label_vocabularize):
                     raise ValueError(
                         f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
                         f"not equal to label length ({len(label_vocabularize)})"
                     )
-                pad_token = -1
+                pad_token = self.vocab_size - 1 
                 label_action_array = np.full(agent_sequence.shape, pad_token, dtype=np.int64)
                 label_action_array[policy_position_mask] = label_vocabularize  
 
@@ -289,8 +308,8 @@ class MultiAgentDataSet(Dataset):
             return (None,) * 6
         
 class MultiAgentDataSetVetorized(MultiAgentDataSet):
-    def __init__(self, directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, verbose=False):
-        super().__init__(directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, verbose)
+    def __init__(self, directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, vocab_size, verbose=False):
+        super().__init__(directory, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, vocab_size, verbose)
 
     def _handle_obs_id(self, value):
         return value.astype(np.int64) if isinstance(value, np.ndarray) else int(value)
@@ -411,7 +430,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                                              idx_reward_vocabularize, rewards_vocabularize,
                                              idx_end_timestep_vocabularize], axis= 1) # (num_timesteps, 8)
                 idx_reset_vocabularize = self.vocabularize('special_token', 'idx_reset_env')
-                pad_token = -1
+                pad_token = self.vocab_size - 1 
                 reset_col = np.where(resets.reshape(-1, 1), idx_reset_vocabularize, pad_token)
                 meta_pairs = np.concatenate([meta_pairs, reset_col], axis=1) # (num_timesteps, 9)
 
@@ -422,7 +441,8 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 agent_seq = agent_seq[filter_mask]
                 
                 policy_position_mask = (agent_seq == self.vocabularize('special_token', 'idx_policy'))
-                label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice][np.newaxis, :]).squeeze()
+                label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice][np.newaxis, :],
+                                                       behavior_value = actions_behavior[agent_id][time_slice,:][np.newaxis, :]).squeeze()
                 if np.sum(policy_position_mask) != len(label_vocabularize):
                     raise ValueError(
                         f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
@@ -451,6 +471,7 @@ def process_subdir(args):
     tag_num = params['tag_num']
     value_num = params['value_num']
     resolution = params['resolution']
+    vocab_size = params['vocab_size']
     
     try:
         # Each process creates its own instance of the dataset
@@ -462,6 +483,7 @@ def process_subdir(args):
             tag_num=tag_num,
             value_num=value_num,
             resolution=resolution,
+            vocab_size=vocab_size,
             verbose=False
         )
         
@@ -496,8 +518,7 @@ def process_subdir(args):
         print(f"Error processing {sub_dir}: {str(e)}")
         return 0
 
-def main(load_dir, save_dir, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, num_workers=None):
-
+def main(load_dir, save_dir, time_step, max_obs_num, max_agent_num, tag_num, value_num, resolution, vocab_size, num_workers=None):
     os.makedirs(save_dir, exist_ok=True)
     
     sub_dirs = [d for d in os.listdir(load_dir) 
@@ -505,35 +526,53 @@ def main(load_dir, save_dir, time_step, max_obs_num, max_agent_num, tag_num, val
     
     print(f"Found {len(sub_dirs)} subdirectories to process")
     
-    # Declare shared counters and locks
-    manager = Manager()
-    counter = manager.Value('i', 0)
-    lock = manager.Lock()
-    
     params = {
         'time_step': time_step,
         'max_obs_num': max_obs_num,
         'max_agent_num': max_agent_num,
         'tag_num': tag_num,
         'value_num': value_num,
-        'resolution': resolution
+        'resolution': resolution,
+        'vocab_size': vocab_size
     }
     
-    tasks = [(sub_dir, load_dir, save_dir, counter, lock, params) 
+    tasks = [(sub_dir, load_dir, save_dir, None, None, params) 
              for sub_dir in sub_dirs]
     
-    if num_workers is None:
-        num_workers = multiprocessing.cpu_count()
-    else:
-        num_workers = min(num_workers, multiprocessing.cpu_count())
     total_records = 0
     
-    with Pool(processes=num_workers) as pool:
-        results = list(tqdm(pool.imap_unordered(process_subdir, tasks), 
-                           total=len(tasks),
-                           desc="Processing subdirectories"))
+    if num_workers == 1:
+        print("Processing in main thread (num_workers=1)...")
+        results = []
+        for task in tqdm(tasks, desc="Processing subdirectories"):
+            counter = type('Counter', (), {'value': 0})
+            lock = type('Lock', (), {'acquire': lambda: None, 'release': lambda: None})
+            task = (task[0], task[1], task[2], counter, lock, task[5])
+            
+            result = process_subdir(task)
+            results.append(result)
         
         total_records = sum(results)
+    else:
+        if num_workers is None:
+            num_workers = multiprocessing.cpu_count()
+        else:
+            num_workers = min(num_workers, multiprocessing.cpu_count())
+        
+        manager = Manager()
+        counter = manager.Value('i', 0)
+        lock = manager.Lock()
+        
+        tasks = [(sub_dir, load_dir, save_dir, counter, lock, params) 
+                 for sub_dir in sub_dirs]
+        
+        print(f"Using {num_workers} worker processes...")
+        with Pool(processes=num_workers) as pool:
+            results = list(tqdm(pool.imap_unordered(process_subdir, tasks), 
+                               total=len(tasks),
+                               desc="Processing subdirectories"))
+            
+            total_records = sum(results)
     
     print(f"\nProcessing completed! Total records saved: {total_records}")
 
@@ -557,6 +596,8 @@ if __name__ == "__main__":
                         help="Value number parameter")
     parser.add_argument("--resolution", type=float, required=True,
                         help="Resolution parameter")
+    parser.add_argument("--vocab_size", type=int, required=True,
+                        help="Vocab size")
     parser.add_argument("--num_workers", type=int, default=None,
                         help="Number of worker processes to use (default: all cores)")
     args = parser.parse_args()
@@ -570,6 +611,7 @@ if __name__ == "__main__":
         args.tag_num,
         args.value_num,
         args.resolution,
+        args.vocab_size,
         num_workers=args.num_workers
     )
 
