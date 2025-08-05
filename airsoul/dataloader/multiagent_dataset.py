@@ -181,18 +181,26 @@ class MultiAgentDataSet(Dataset):
                 on_values = raw_values[on_mask]
                 if use_diff_action:
                     if behavior_value is None:
+                        flags_previous_off = np.zeros_like(on_mask, dtype=bool)
+                        flags_previous_off[0] = True
+                        flags_previous_off[1:] = ~on_mask[:-1]
+                        on_values_previous_off = flags_previous_off[on_mask]
                         diff_values = np.zeros_like(on_values)
-                        diff_values[0] = on_values[0]
                         diff_values[1:] = on_values[1:] - on_values[:-1]
+                        diff_values[on_values_previous_off] = on_values[on_values_previous_off]
                         on_values = diff_values
                     else:
-                        raw_values_behavior = behavior_value[:, :, 0:1][on_mask] 
-                        flags_behavior = behavior_value[:, :, 1:2][on_mask]
-                        behavior_off_mask = flags_behavior < 0.5
+                        raw_values_behavior = behavior_value[:, :, 0:1][on_mask]
+                        flags_behavior = behavior_value[:, :, 1:2]
+                        behavior_on_mask = flags_behavior > 0.5
+                        behavior_previous_off = np.zeros_like(behavior_on_mask, dtype=bool)
+                        behavior_previous_off[0] = True
+                        behavior_previous_off[1:] = ~behavior_on_mask[:1]
+                        behavior_previous_off = behavior_previous_off[on_mask]
                         diff_values = np.zeros_like(on_values)
-                        diff_values[0] = on_values[0]
                         diff_values[1:] = on_values[1:] - raw_values_behavior[:-1]
-                        diff_values[behavior_off_mask] = on_values[behavior_off_mask]
+                        diff_values[behavior_previous_off] = on_values[behavior_previous_off]
+                        on_values = diff_values
 
                 below_min = on_values < self.min_value
                 above_max = on_values > self.max_value
@@ -227,6 +235,34 @@ class MultiAgentDataSet(Dataset):
                 quantized = np.round((clipped - self.min_value) / self.resolution).astype(np.int64)
                 result[in_range] = self.VALUE_BASE + quantized + 1
             return result.item() if scalar_input else result
+
+    def _handle_action_vocab(self, vocab, value_previous=None, use_diff_action=True):
+        # vocab: [num_of_agent, T, value]
+        num_agents, timesteps = vocab.shape[:2]
+        result = np.zeros((num_agents, timesteps, 2))
+        off_mask = (vocab == self.ACTION_OFF_BASE)
+        on_mask = ~ off_mask
+        result[off_mask] = [16.0,0.0]
+        
+        vocab_on = vocab[on_mask]
+        below_min_mask = (vocab_on == self.VALUE_BASE)
+        above_max_mask = (vocab_on == self.VALUE_BASE + self.value_num + 1)
+        in_range_mask = ~(below_min_mask | above_max_mask)
+        result[on_mask][below_min_mask] = [self.min_value, 1.0]
+        result[on_mask][above_max_mask] = [self.max_value, 1.0]
+        if np.any(in_range_mask):
+            quantized_index = vocab_on[in_range_mask] - self.VALUE_BASE - 1
+            restored_values = self.min_value + quantized_index * self.resolution
+            result[on_mask][in_range_mask] = np.column_stack([restored_values, np.ones_like(restored_values)])
+        
+        if use_diff_action and value_previous is not None:
+            off_mask_previous = (value_previous[:, :, 1] < 0.5)
+            on_mask_previous = ~ off_mask_previous
+            both_on_mask = on_mask_previous & on_mask
+            diff_value = result[:, :, 0][both_on_mask] - value_previous[:, :, 0][both_on_mask]
+            result[:, :, 0][both_on_mask]= diff_value
+
+        return result
 
     def _load_and_process_data(self, path):
         try:
