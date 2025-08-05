@@ -282,9 +282,10 @@ class MultiAgentDataSet(Dataset):
                     time_step_seq.append(self.vocabularize('value', actions_behavior[agent_id][t]))
                     time_step_seq.append(self.vocabularize('special_token', 'idx_reward'))
                     time_step_seq.append(self.vocabularize('value', rewards[t]))
-                    time_step_seq.append(self.vocabularize('special_token', 'idx_end_timestep'))
                     if resets[t]:
                         time_step_seq.append(self.vocabularize('special_token', 'idx_reset_env'))
+                    else:
+                        time_step_seq.append(self.vocabularize('special_token', 'idx_end_timestep'))
                     agent_sequence.append(time_step_seq)
 
                 agent_sequence = np.concatenate(agent_sequence)
@@ -418,7 +419,8 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 idx_reward_vocabularize = self.vocabularize('special_token', 'idx_reward')
                 idx_reward_vocabularize = np.full((num_timesteps, 1), idx_reward_vocabularize, dtype=np.int64)
                 idx_end_timestep_vocabularize = self.vocabularize('special_token', 'idx_end_timestep')
-                idx_end_timestep_vocabularize = np.full((num_timesteps, 1), idx_end_timestep_vocabularize, dtype=np.int64)
+                idx_reset_vocabularize = self.vocabularize('special_token', 'idx_reset_env')
+                idx_end_timestep_vocabularize = np.where(resets.reshape(-1, 1), idx_reset_vocabularize, idx_end_timestep_vocabularize)
                 tags_vocabularize = self.vocabularize('tag_value', tags[agent_id][time_slice])
                 tags_vocabularize = tags_vocabularize[:, np.newaxis]
                 agent_data_vocabularize = self.vocabularize('value', actions_behavior[agent_id][time_slice,:][np.newaxis, :]).squeeze()
@@ -428,17 +430,11 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 meta_pairs = np.concatenate([idx_policy_vocabularize, idx_tag_vocabularize, tags_vocabularize,
                                              idx_a_self_vocabularize, agent_data_vocabularize,
                                              idx_reward_vocabularize, rewards_vocabularize,
-                                             idx_end_timestep_vocabularize], axis= 1) # (num_timesteps, 8)
-                idx_reset_vocabularize = self.vocabularize('special_token', 'idx_reset_env')
-                pad_token = self.vocab_size - 1 
-                reset_col = np.where(resets.reshape(-1, 1), idx_reset_vocabularize, pad_token)
-                meta_pairs = np.concatenate([meta_pairs, reset_col], axis=1) # (num_timesteps, 9)
+                                             idx_end_timestep_vocabularize], axis= 1) # (num_timesteps, 8)               
 
                 # Merge all data
                 agent_seq = np.concatenate([obs_pairs, agent_pairs, meta_pairs], axis=1) # (timesteps, num_relative_obs * 2 + num_relative_agents * 2 + 9)
                 agent_seq = agent_seq.reshape(-1) # (timesteps * (num_relative_obs * 2 + num_relative_agents * 2 + 9))
-                filter_mask = agent_seq != pad_token
-                agent_seq = agent_seq[filter_mask]
                 
                 policy_position_mask = (agent_seq == self.vocabularize('special_token', 'idx_policy'))
                 label_vocabularize = self.vocabularize('value', actions_label[agent_id][time_slice][np.newaxis, :],
@@ -448,6 +444,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                         f"Agent {agent_id} poilicy position count ({np.sum(policy_position_mask)}) "
                         f"not equal to label length ({len(label_vocabularize)})"
                     )
+                pad_token = self.vocab_size - 1
                 label_action_array = np.full(agent_seq.shape, pad_token, dtype=np.int64)
                 label_action_array[policy_position_mask] = label_vocabularize
                 
