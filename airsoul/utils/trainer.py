@@ -14,8 +14,16 @@ from torch.utils.data import DataLoader, Dataset
 from torch.amp import autocast, GradScaler
 from airsoul.dataloader.prefetch_dataloader import PrefetchDataLoader
 from .tools import Configure, Logger, log_progress, log_debug, log_warn, log_fatal, log_sum_parameters_grad
-from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model
+from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model, custom_save_model
 from .scheduler import noam_scheduler
+
+def is_multi_node():
+    # 检查NODE_RANK（torchrun多机时设置）
+    node_rank = os.environ.get('NODE_RANK')
+    if node_rank is not None:
+        return True  # 有NODE_RANK说明是多机 
+    return False
+
 
 def EpochManager(cls):
     @wraps(cls, updated=())
@@ -102,14 +110,14 @@ def EpochManager(cls):
 
         @property
         def get_global_epoch_id(self):
-            if("epochs" in self.training_meta_info):
-                return self.training_meta_info["epochs"]
+            if("epochs" in self.training_metainfo):
+                return self.training_metainfo["epochs"]
             else:
                 return 0
         @property
         def get_global_batch_id(self): 
-            if("steps" in self.training_meta_info):
-                return self.training_meta_info["steps"]
+            if("steps" in self.training_metainfo):
+                return self.training_metainfo["steps"]
             else:
                 return 0
 
@@ -119,13 +127,13 @@ def EpochManager(cls):
             return True
 
         def _epoch_start(self):
-            if(not self._valid_epoch(self.get_global_epoch_id)):
+            if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_start')):
                 self.computer.epoch_start(self.get_global_epoch_id)
         
         def _epoch_end(self):
-            if(not self._valid_epoch(self.get_global_epoch_id)):
+            if(not self._valid_epoch()):
                 return
             if(hasattr(self.computer, 'epoch_end')):
                 self.computer.epoch_end(self.get_global_epoch_id)
@@ -133,10 +141,11 @@ def EpochManager(cls):
         def _preprocess(self):
             if(hasattr(self.computer, 'preprocess')):
                 self.computer.preprocess()
-            if("steps" not in self.training_meta_info):
-                self.training_meta_info["steps"] = 0
-            if("epochs" not in self.training_meta_info):
-                self.training_meta_info["epochs"] = 0
+            if("training_metainfo" in self.__dict__):
+                if("steps" not in self.training_metainfo):
+                    self.training_metainfo["steps"] = 0
+                if("epochs" not in self.training_metainfo):
+                    self.training_metainfo["epochs"] = 0
             self.init_dataloader()
             self.init_logger()
             self.init_optimizer()
@@ -165,7 +174,10 @@ def EpochManager(cls):
                 manual_sync = False
             data_length = len(self.dataloader)
 
-            done = self.training_meta_info["epochs"] > self.config.max_epochs
+            if("training_metainfo" in self.__dict__ and self.is_training):
+                done = self.training_metainfo["epochs"] > self.config.max_epochs
+            else:
+                done = False
 
             for batch_id, batch_data in enumerate(self.dataloader):
                 # Important: Must reset the model before segment iteration
@@ -176,7 +188,9 @@ def EpochManager(cls):
                     with autocast(dtype=torch.bfloat16, enabled=self.config.use_amp, device_type=device_type):
                         self.computer.compute(
                                   *batch_data, 
-                                  batch_id=batch_id)
+                                  local_batch_id=batch_id,
+                                  global_batch_id=self.get_global_batch_id,
+                                  global_epoch_id=self.get_global_epoch_id)
                     if(manual_sync):
                         for param in self.model.parameters():
                             if(param.grad is not None):
@@ -186,33 +200,33 @@ def EpochManager(cls):
                     #log_sum_parameters_grad(self.model, self.rank)
                     apply_gradient_safely(self.model, self.optimizer, scaler=self.scaler)
                     self.lr_scheduler.step()
-                    self.training_meta_info["steps"] += 1
+                    self.training_metainfo["steps"] += 1
                 else:
                     self.model.eval()
                     with torch.no_grad():
                         self.computer.compute(
                                   *batch_data, 
-                                  batch_id=batch_id,
-                                  epoch_id=self.training_meta_info["epochs"],
-                                  global_step_id=self.training_meta_info["steps"])
+                                  local_batch_id=batch_id,
+                                  global_batch_id=self.get_global_batch_id,
+                                  global_epoch_id=self.get_global_epoch_id)
 
                 # Emergency Save
                 if(self.emergency_save_check()):
                     log_debug("Emergency save triggered, saving model...")
                     custom_save_model(self.model, self.config.save_model_path,
-                                    self.__class__.__name__, self.training_meta_info,
+                                    self.__class__.__name__, self.training_metainfo,
                                     appendix="emergency")
 
                 # Safety Check and Save
                 need_break = False
                 if(self.is_training and self.config.has_attr("max_save_iterations") 
-                                and acc_iter > self.config.max_save_iterations 
+                                and (self.get_global_batch_id + 1) > self.config.max_save_iterations 
                                 and self.config.max_save_iterations > 0):
                     acc_iter = 0
                     log_debug("\nSAVE MODEL FOR FAIL-SAFETY...\n", on=self.main)
                     if(self.main):
                         custom_save_model(self.model, self.config.save_model_path,
-                                        self.__class__.__name__, self.training_meta_info,
+                                        self.__class__.__name__, self.training_metainfo,
                                         appendix="failsafe")
                     need_break = True
 
@@ -221,14 +235,17 @@ def EpochManager(cls):
 
                 yield need_break, done
 
-            self.training_meta_info["epochs"] += 1
+            self.training_metainfo["epochs"] += 1
             
             # Save At Training Epoch End
             if(self.main and self.is_training):
                 custom_save_model(self.model, self.config.save_model_path,
-                                self.__class__.__name__, self.training_meta_info)
+                                self.__class__.__name__, self.training_metainfo)
 
-            done = self.training_meta_info["epochs"] > self.config.max_epochs
+            if("training_metainfo" in self.__dict__ and self.is_training):
+                done = self.training_metainfo["epochs"] > self.config.max_epochs
+            else:
+                done = False
 
             yield True, done
 
@@ -238,11 +255,18 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                 model_type, train_objects, evaluate_objects, extra_info):
     """
     """
+    local_rank = int(os.environ["LOCAL_RANK"])
     if use_gpu:
-        torch.cuda.set_device(rank)  # Set the current GPU to be used
-        device = torch.device(f'cuda:{rank}')
-        device_type = 'cuda'
-        dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=timedelta(seconds=30))
+        if is_multi_node():
+            torch.cuda.set_device(local_rank)
+            device = torch.device(f'cuda:{local_rank}')
+            device_type = 'cuda'
+            dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        else:
+            torch.cuda.set_device(rank)  # Set the current GPU to be used
+            device = torch.device(f'cuda:{rank}')
+            device_type = 'cuda'
+            dist.init_process_group("nccl", rank=rank, world_size=world_size)
     else:
         device = torch.device('cpu')
         device_type = 'cpu'
@@ -263,7 +287,11 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     model = model.to(device)
 
     if use_gpu:
-        model = DDP(model, device_ids=[rank])
+        if is_multi_node():
+            # If using multiple nodes, we need to specify the device_ids
+            model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        else:
+            model = DDP(model, device_ids=[rank])
     else:
         model = DDP(model)
 
@@ -287,23 +315,23 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     if(not isinstance(evaluate_objects, list) and not isinstance(evaluate_objects, tuple)):
         evaluate_objects = [evaluate_objects]        
 
-    if(self.config.has_attr('monitor_dir')):
-        watch_dir = self.config.monitor_dir
+    if(config.has_attr('monitor_dir')):
+        watch_dir = config.monitor_dir
     else:
         watch_dir = None
 
     train_list = []
     for train_object in train_objects:
-        if(train_object.name not in modelinfo):
+        if(train_object.__name__ not in metainfo):
             object_info = dict()
         else:
-            object_info = metainfo[train_object.name]
+            object_info = metainfo[train_object.__name__]
         if(config.has_attr("reset_metainfo")):
             for key,value in config.get_dict("reset_metainfo").items():
                 object_info[key] = value
         train_list.append(train_object(run_name=config.run_name, 
                                         model=model, 
-                                        training_meta_info=object_info,
+                                        training_metainfo=object_info,
                                         config=config.train_config,
                                         log_config=config.log_config,
                                         rank=rank,
@@ -317,13 +345,13 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
 
     evaluate_list = []
     for evaluate_object in evaluate_objects:
-        if(train_object.name not in modelinfo):
+        if(evaluate_object.__name__ not in metainfo):
             object_info = dict()
         else:
-            object_info = modelinfo[train_object.name]
+            object_info = metainfo[evaluate_object.__name__]
         evaluate_list.append(evaluate_object(run_name=config.run_name, 
                                         model=model, 
-                                        meta_info=object_info,
+                                        training_metainfo=object_info,
                                         config=config.test_config,
                                         log_config=config.log_config,
                                         rank=rank,
@@ -378,6 +406,9 @@ class Runner(object):
 
         self.use_gpu = torch.cuda.is_available()
         self.world_size = torch.cuda.device_count() if self.use_gpu else os.cpu_count()
+        if "WORLD_SIZE" in os.environ:
+            self.world_size = int(os.environ["WORLD_SIZE"])
+
         if(self.use_gpu):
             log_debug("Use Parallel GPUs: %s" % self.world_size)
         else:
@@ -395,27 +426,51 @@ class Runner(object):
         
         print("Final configuration:\n", self.config)
 
-        if(self.config.has_attr('monitor_dir')):
-            create_folder(self.config.monitor_dir)
-            self.config.to_yaml(f"{self.config.monitor_dir}/config_monitor.yaml")
+        if not is_multi_node():
+            if(self.config.has_attr('monitor_dir')):
+                create_folder(self.config.monitor_dir)
+                self.config.to_yaml(f"{self.config.monitor_dir}/config_monitor.yaml")
 
-        if(self.config.has_attr('master_addr')):
-            os.environ['MASTER_ADDR'] = self.config.master_addr
-        else:
-            os.environ['MASTER_ADDR'] = 'localhost' 
-
-        os.environ['MASTER_PORT'] = self.config.master_port
-
+            if('MASTER_ADDR' in os.environ):
+                log_debug(f"Environment variable MASTER_ADDR is already set, using {os.environ['MASTER_ADDR']}.")
+            else:
+                if(self.config.has_attr('master_addr')):
+                    os.environ['MASTER_ADDR'] = self.config.master_addr
+                else:
+                    os.environ['MASTER_ADDR'] = 'localhost' 
+                log_debug(f"MASTER_ADDR set to {os.environ['MASTER_ADDR']}.")
+            if('MASTER_PORT' in os.environ):
+                log_debug(f"Environment variable MASTER_PORT is already set, using {os.environ['MASTER_PORT']}.")
+            else:
+                os.environ['MASTER_PORT'] = self.config.master_port
+                log_debug(f"MASTER_PORT set to {os.environ['MASTER_PORT']}.")
 
     def start(self, model_type, train_objects, evaluate_objects, extra_info=None):
-        mp.spawn(dist_process,
-                args=(self.use_gpu, 
-                      self.world_size, 
-                      self.config, 
-                      0, # always use #0 as the main GPU
-                      model_type,
-                      train_objects, 
-                      evaluate_objects,
-                      extra_info),
-                nprocs=self.world_size if self.use_gpu else min(self.world_size, 4),  # Limit CPU processes if desired
-                join=True)
+
+        if is_multi_node():
+            rank = int(os.environ["RANK"])
+            local_rank = int(os.environ["LOCAL_RANK"])
+            world_size = int(os.environ["WORLD_SIZE"])
+            dist_process(
+                rank=rank,
+                use_gpu=self.use_gpu,
+                world_size=world_size,
+                config=self.config,
+                main_rank=0,  # 可保留或去掉此逻辑
+                model_type=model_type,
+                train_objects=train_objects,
+                evaluate_objects=evaluate_objects,
+                extra_info=extra_info
+            )
+        else:
+            mp.spawn(dist_process,
+                    args=(self.use_gpu, 
+                        self.world_size, 
+                        self.config, 
+                        0, # always use #0 as the main GPU
+                        model_type,
+                        train_objects, 
+                        evaluate_objects,
+                        extra_info),
+                    nprocs=self.world_size if self.use_gpu else min(self.world_size, 4),  # Limit CPU processes if desired
+                    join=True)

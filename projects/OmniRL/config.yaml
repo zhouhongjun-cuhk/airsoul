@@ -2,6 +2,9 @@
 run_name: [RUN_NAME]
 master_port: "12402"
 load_model_path: [Path or None]
+reset_metainfo:
+  epochs: 0
+monitor_dir: ./runs/monitor/
 
 log_config:
   use_tensorboard: True
@@ -212,7 +215,6 @@ train_config:
 
     lr: 2.0e-4
     lr_decay_interval: 2000
-    lr_start_step: 8000
 
     data_path: [Path]
     save_model_path: [Path]

@@ -162,10 +162,7 @@ def custom_save_model(model, save_model_path,
                       object_name, meta_info,
                       name_key="epochs", appendix=""):
     check_model_validity(model.module)
-    if(step_id is None and epoch_id is None):
-        data = model.state_dict()
-    else:
-        data = {"metadict_models":model.state_dict()}
+    data = {"metadict_models":model.state_dict()}
     for key in meta_info:
         data[f"metadict_{object_name}_{key}"] = meta_info[key]
     if(name_key not in meta_info):
@@ -191,9 +188,9 @@ def custom_load_model(model,
 
     saved_metainfo = torch.load(state_dict_path, weights_only=False) 
     metainfo = dict()
-    if("metadict_models" in saved_state_dict):
-        saved_state_dict = saved_state_dict["metadict_models"]
-        for key in save_metainfo:
+    if("metadict_models" in saved_metainfo):
+        saved_state_dict = saved_metainfo["metadict_models"]
+        for key in saved_metainfo:
             toks = key.split('_')
             """
             format: metadict_TrainMaze_steps
