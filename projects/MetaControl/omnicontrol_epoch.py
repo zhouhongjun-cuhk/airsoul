@@ -34,7 +34,7 @@ class OmniControlEpoch:
     def __init__(self, **kwargs):
         for key in kwargs:
             setattr(self, key, kwargs[key])
-        self.DataType=AnyMDPDataSet #AnyMDPDataSet
+        self.DataType=SmallBatchDataSetBase
         if(self.is_training):
             self.logger_keys = ["learning_rate", 
                         "loss_worldmodel_state", 

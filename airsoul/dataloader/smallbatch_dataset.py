@@ -6,7 +6,7 @@ import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
 class SmallBatchDataSetBase(Dataset):
-    def __init__(self, directory, time_step, file_size=None, verbose=False):
+    def __init__(self, directory, time_step, file_size=-1, verbose=False):
         # For file_size!=None, each file contains multiple samples
         # For file_size=None, each file contains one sample
         if(verbose):
@@ -25,6 +25,10 @@ class SmallBatchDataSetBase(Dataset):
                 self.file_list.extend([os.path.join(d, file) for file in file_list])
             else:
                 for file in file_list:
+                    if(self.file_size < 0):
+                        file_size = np.load(os.path.join(d, file_list[0]) + '/observations.npy').shape[0]
+                    else:
+                        file_size = self.file_size
                     self.file_list.extend([(os.path.join(d, file), idx) for idx in range(file_size)])            
             
         self.time_step = time_step
@@ -93,7 +97,7 @@ class SmallBatchDataSetBase(Dataset):
 # Test Maze Data Set
 if __name__=="__main__":
     data_path = sys.argv[1]
-    dataset = SmallBatchDataSetBase(data_path, 200, file_size=500, verbose=True)
+    dataset = SmallBatchDataSetBase(data_path, 200, file_size=-1, verbose=True)
     print("The number of data is: %s" % len(dataset))
     obs, bact, rewards, lact = dataset[0]
     if obs is not None:

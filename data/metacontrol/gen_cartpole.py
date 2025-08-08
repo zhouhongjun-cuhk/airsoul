@@ -23,6 +23,8 @@ def dump_cartpole_record(
     masspole_scope=[0.05, 0.20],
     length_scope=[0.25, 1.0]
 ):
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    torch.set_num_threads(1)
     env = gym.make('random-cartpole-v0', render_mode='rgb_array')
     env.set_task(sample_cartpole(gravity_scope=gravity_scope,
                                 masscart_scope=masscart_scope,
