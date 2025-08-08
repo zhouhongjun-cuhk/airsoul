@@ -3,3 +3,4 @@ from .metalm_dataset import LMDataSet
 from .anymdp_dataset import AnyMDPDataSet, AnyMDPv2DataSet, AnyMDPDataSetContinuousState, AnyMDPDataSetContinuousStateAction
 from .multiagent_dataset import MultiAgentDataSetVetorized
 from .prefetch_dataloader import PrefetchDataLoader, segment_iterator
+from .smallbatch_dataset import SmallBatchDataSetBase
