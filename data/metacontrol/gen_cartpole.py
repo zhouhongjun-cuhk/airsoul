@@ -14,6 +14,8 @@ from stable_baselines3.common.monitor import Monitor
 import xenoverse.metacontrol
 from xenoverse.metacontrol import sample_cartpole
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 def dump_cartpole_record(
     file_path,
     seq_number=500,
@@ -38,7 +40,7 @@ def dump_cartpole_record(
         verbose=0
     )
  
-    model.learn(total_timesteps=10000)
+    model.learn(total_timesteps=40000)
     arr_obs = []
     arr_bactions = []
     arr_lactions = []
@@ -118,7 +120,7 @@ if __name__=="__main__":
     # Parse the arguments, should include the output file name
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_path", type=str, default="./cartpole_data/", help="output directory, the data would be stored as output_path/record-xxxx.npy")
-    parser.add_argument("--seq_length", type=int, default=500, help="max steps, default:500")
+    parser.add_argument("--seq_length", type=int, default=200, help="max steps, default:500")
     parser.add_argument("--offpolicy_labeling", type=int, default=0, help="enable offpolicy labeling (DAgger), default:False")
     parser.add_argument("--seq_number", type=int, default=500, help="sequence number, default:500")
     parser.add_argument("--task_number", type=int, default=8, help="task number, default:8")
