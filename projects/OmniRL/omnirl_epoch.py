@@ -70,8 +70,9 @@ class OmniRLEpoch:
             self.reward_dropout = 0.20
 
     def compute(self, sarr, parr, tarr, baarr, rarr, laarr,
-                        epoch_id=-1, 
-                        batch_id=-1):
+                        global_batch_id=-1,
+                        local_batch_id=-1,
+                        global_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -122,8 +123,8 @@ class OmniRLEpoch:
                         stat_res["loss_worldmodel_reward"]["mean"], 
                         stat_res["loss_policymodel"]["mean"], 
                         stat_res["entropy"]["mean"],
-                        epoch=epoch_id,
-                        iteration=batch_id)
+                        epoch=global_epoch_id,
+                        iteration=local_batch_id)
         else:
             loss_wm_s = torch.cat([loss["wm-s"] / torch.clamp_min(loss["count_s"], 1.0e-3) 
                     for loss in losses], dim=1)

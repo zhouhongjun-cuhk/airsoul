@@ -67,6 +67,25 @@ def safety_check(tensor, replacement=None, msg=None, on=True):
 
     return tensor, risk_level
 
+def check_model_validity(model, verbose=False, level=1):
+    """
+    Check the validity of model in RunTime
+    level: 0 -> only accept all parameters l2 norm < 1e+6
+           1 -> only accept all valid parameters
+    """
+    param_isnormal = dict()
+    max_risk = 0
+    for param_name, param_tensor in model.named_parameters():
+        if(not param_tensor.requires_grad):
+            continue # Neglect non-trainable parameters
+
+        safe_param, risk = safety_check(param_tensor, 
+                                        msg=f"checking parameters: {param_name}",
+                                        on=verbose)
+        max_risk = max(risk, max_risk)
+
+    return (max_risk > level)
+
 def format_cache(cache, prefix=''):
     if(cache is None):
         return prefix + ' None'
@@ -105,18 +124,6 @@ def memory_cpy(cache):
     else:
         return cache
 
-def model_path(save_model_path, epoch_id, *optimizers):
-    directory_path = '%s/ckpt_%02d/' % (save_model_path, epoch_id)
-    if not os.path.exists(directory_path):
-        os.makedirs(directory_path)
-    if(len(optimizers) < 1):
-        return f'{directory_path}/model.pth'
-    else:
-        ret_str = [f'{directory_path}/model.pth']
-        for opt in optimizers:
-            ret_str.append(f'{directory_path}/{opt}.pth')
-    return tuple(ret_str)
-
 def reset_optimizer_state(optimizer):
     state = optimizer.state
     for k in list(state.keys()):
@@ -151,8 +158,22 @@ def print_memory(info="Default"):
             "Memory cached:", 
             torch.cuda.memory_cached())
 
-def custom_load_model(model, 
-                      state_dict_path, 
+def custom_save_model(model, save_model_path, 
+                      object_name, meta_info,
+                      name_key="epochs", appendix=""):
+    check_model_validity(model.module)
+    data = {"metadict_models":model.state_dict()}
+    for key in meta_info:
+        data[f"metadict_{object_name}_{key}"] = meta_info[key]
+    if(name_key not in meta_info):
+        log_warn(f"{name_key} not in the dicts, only f{meta_info.keys()} are available")
+        name = 'default'
+    else:
+        name = meta_info[name_key]
+    torch.save(data, save_model_path + f"/ckpt_{name}{appendix}.pth")
+
+def custom_load_model(model,
+                      state_dict_path,
                       black_list=[], 
                       strict_check=False, 
                       verbose=False):  
@@ -162,7 +183,25 @@ def custom_load_model(model,
     strick_check: if true, parameters with NAN/INF and mismatching shape will cause error
         otherwise, they will be replaced by zero and matched with maximum shared parts
     """
-    saved_state_dict = torch.load(state_dict_path, weights_only=False)  
+    if(not os.path.exists(state_dict_path)):
+        log_fatal(f"State dict path {state_dict_path} does not exist, quit job...")
+
+    saved_metainfo = torch.load(state_dict_path, weights_only=False) 
+    metainfo = dict()
+    if("metadict_models" in saved_metainfo):
+        saved_state_dict = saved_metainfo["metadict_models"]
+        for key in saved_metainfo:
+            toks = key.split('_')
+            """
+            format: metadict_TrainMaze_steps
+            """
+            if(len(toks) == 3 and toks[0] == 'metadict'):
+                if(toks[1] not in metainfo):
+                    metainfo[toks[1]] = dict()
+                metainfo[toks[1]][toks[2]] = saved_metainfo[key]
+    else:
+        saved_state_dict = saved_metainfo
+
     matched_state_dict = {} 
 
     # Notice: load only trainable parameters
@@ -224,24 +263,4 @@ def custom_load_model(model,
       
     model.load_state_dict(matched_state_dict, strict=False)  
     log_debug("-" * 20, f"Load model success", "-" * 20, on=verbose)
-    return model  
-
-def check_model_validity(model, verbose=False, level=1):
-    """
-    Check the validity of model in RunTime
-    level: 0 -> only accept all parameters l2 norm < 1e+6
-           1 -> only accept all valid parameters
-    """
-    param_isnormal = dict()
-    max_risk = 0
-    for param_name, param_tensor in model.named_parameters():
-        if(not param_tensor.requires_grad):
-            continue # Neglect non-trainable parameters
-
-        safe_param, risk = safety_check(param_tensor, 
-                                        msg=f"checking parameters: {param_name}",
-                                        on=verbose)
-        max_risk = max(risk, max_risk)
-
-    return (max_risk > level)
-
+    return model, metainfo

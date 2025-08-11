@@ -3,6 +3,7 @@ from .res_nets import ResBlock, ImageEncoder, ImageDecoder
 from .mlp_layers import MLPEncoder, ResidualMLPDecoder
 from .map_layers import FixedEncoderDecoder
 from .transformers import ARTransformerEncoderLayer, ARTransformerEncoder
+from .sparse_attention import NSATransformerEncoderLayer, NSATransformerEncoder
 from .diffusion import DiffusionLayers
 from .rope_mha import RoPEMultiheadAttention
 from .recursion import SimpleLSTM, PRNN

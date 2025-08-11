@@ -12,6 +12,7 @@ from .rwkv6 import RWKV6Layer
 from .rwkv7 import RWKV7Layer
 from .deltanet import GatedDeltaNet
 from .mamba2 import Mamba2Layer
+from .sparse_attention import NSATransformerEncoder
 
 class CausalBlock(nn.Module):
     """
@@ -35,6 +36,14 @@ class CausalBlock(nn.Module):
                 dim_feedforward=config.inner_hidden_size, 
                 dropout=config.dropout, 
                 context_window=config.context_window
+            )
+        elif(self.model_type == "nsa"):
+            main_encoder = NSATransformerEncoder(
+                config.num_layers, 
+                config.hidden_size, 
+                config.nhead, 
+                dim_feedforward=config.inner_hidden_size, 
+                dropout=config.dropout, 
             )
         elif(self.model_type == "gsa"):
             main_encoder = MultiBlocks(

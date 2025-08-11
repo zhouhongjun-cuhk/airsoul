@@ -75,10 +75,10 @@ class MazeEpochVAE:
         return True
 
     def compute(self, obs_arr, behavior_actid_arr, label_actid_arr, 
-                behavior_act_arr, label_act_arr, 
-                rew_arr,
-                epoch_id=-1, 
-                batch_id=-1):
+                behavior_act_arr, label_act_arr, rew_arr, 
+                local_batch_id=-1,
+                global_batch_id=-1,
+                gloabl_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -119,17 +119,16 @@ class MazeEpochVAE:
                             self.lambda_scheduler(), 
                             stat_res["reconstruction_error"]["mean"], 
                             stat_res["kl_divergence"]["mean"],
-                            epoch=epoch_id,
-                            iteration=batch_id)
+                            epoch=global_epoch_id,
+                            iteration=local_batch_id)
             # update the scheduler
-            self.sigma_scheduler.step()
-            self.lambda_scheduler.step()
+            self.sigma_scheduler.reset(global_batch_id)
+            self.lambda_scheduler.reset(global_batch_id)
         else:
             self.stat.gather(self.device,
                     reconstruction_error=loss["Reconstruction-Error"] / loss["count"], 
                     kl_divergence=loss["KL-Divergence"] / loss["count"], 
                     count=loss["count"])
-            
         
     def epoch_end(self, epoch_id):
         if(not self.is_training):
@@ -182,10 +181,10 @@ class MazeEpochCausal:
             )
 
     def compute(self, cmd_arr, obs_arr, behavior_actid_arr, label_actid_arr, 
-                behavior_act_arr, label_act_arr, 
-                rew_arr,
-                epoch_id=-1, 
-                batch_id=-1):
+                behavior_act_arr, label_act_arr, rew_arr,
+                global_batch_id=-1,
+                local_batch_id=-1,
+                global_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -235,8 +234,8 @@ class MazeEpochCausal:
                             stat_res["loss_worldmodel_raw"]["mean"], 
                             stat_res["loss_worldmodel_latent"]["mean"],
                             stat_res["loss_policymodel"]["mean"],
-                            epoch=epoch_id,
-                            iteration=batch_id)
+                            epoch=global_epoch_id,
+                            iteration=local_batch_id)
         else:
             loss_wm_r = torch.cat([loss["wm-raw"] / loss["count_wm"] for loss in losses], dim=1)
             loss_wm_l = torch.cat([loss["wm-latent"] / loss["count_wm"] for loss in losses], dim=1)
