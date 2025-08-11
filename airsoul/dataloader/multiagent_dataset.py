@@ -242,7 +242,7 @@ class MultiAgentDataSet(Dataset):
         result = np.zeros((num_agents, timesteps, 2))
         off_mask = (vocab == self.ACTION_OFF_BASE)
         on_mask = ~ off_mask
-        result[off_mask] = [16.0,0.0]
+        result[off_mask] = [0.0,0.0]
         
         vocab_on = vocab[on_mask]
         below_min_mask = (vocab_on == self.VALUE_BASE)
@@ -374,7 +374,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
         
         return merged    
 
-    def _load_and_process_data(self, path):
+    def _load_and_process_data(self, path, use_relative_idx=False):
         try:
             observations = np.load(path + '/diff_observations.npy')
             actions_behavior = np.load(path + '/diff_actions_behavior.npy')
@@ -424,6 +424,8 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 relevant_obs = np.where(obs_mask)[0] # (num_relative_obs)
                 obs_idx_vocabularize = self.vocabularize('obs_id', relevant_obs)
                 obs_value_vocabularize = self.vocabularize('value', obs_data).squeeze()
+                if use_relative_idx:
+                    obs_idx_vocabularize = np.arange(len(obs_idx_vocabularize))
                 obs_idx_vocabularize = np.broadcast_to(obs_idx_vocabularize[:, np.newaxis],
                                                    shape=obs_value_vocabularize.shape).astype(np.int64)  # (num_relative_obs, timesteps)
                 obs_value_vocabularize = obs_value_vocabularize.T  # (timesteps, num_relative_obs)
@@ -437,6 +439,8 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 
                 agent_idx_vocabularize = self.vocabularize('agent_id', relevant_agents)
                 agent_value_vocabularize = self.vocabularize('value', agent_data).squeeze()
+                if use_relative_idx:
+                    agent_idx_vocabularize = np.arange(len(agent_idx_vocabularize)) + self.AGENT_IDX_OFFSET
                 agent_idx_vocabularize = np.broadcast_to(agent_idx_vocabularize[:, np.newaxis],
                                                          shape=agent_value_vocabularize.shape).astype(np.int64)  # (num_relative_agents, timesteps)
                 agent_value_vocabularize = agent_value_vocabularize.T  # (timesteps, num_relative_agents)
@@ -444,7 +448,7 @@ class MultiAgentDataSetVetorized(MultiAgentDataSet):
                 # Merge into (timesteps, num_relative_agents * 2)
                 agent_pairs = self._interleave_columns([agent_idx_vocabularize, agent_value_vocabularize])
                 
-                # meta_data: idx_policy, idx_tag, tag, idx_a_self, a_self, idx_reward, reward, idx_end_timestep, idx_reset(if reset)
+                # meta_data: idx_policy, idx_tag, tag, idx_a_self, a_self, idx_reward, reward, idx_end_timestep/idx_reset(if reset)
                 # meta_pairs in (num_timesteps)
                 idx_policy_vocabularize = self.vocabularize('special_token', 'idx_policy')
                 idx_policy_vocabularize = np.full((num_timesteps, 1), idx_policy_vocabularize, dtype=np.int64)
