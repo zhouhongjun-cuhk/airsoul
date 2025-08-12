@@ -308,6 +308,7 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
                                   verbose=main, 
                                   strict_check=False)
     else:
+        metainfo = []
         log_warn("No model is loaded as `load_model_path` is not found in config or is None", on=main)
 
     if(not isinstance(train_objects, list) and not isinstance(train_objects, tuple)):
