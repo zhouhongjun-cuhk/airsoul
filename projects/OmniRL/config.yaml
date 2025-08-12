@@ -219,6 +219,20 @@ model_config:
       memory_type: MEM
       is_frozen: False
 
+  causal_block_bak_8:
+      model_type: NSA
+      num_layers: 18
+      hidden_size: 512
+      inner_hidden_size: 1024
+      dropout: 0.10
+      nhead: 8
+      position_encoding_size: 48000
+      use_layer_norm: True
+      use_blockrecurrence: True
+      memory_length: 3000
+      memory_type: KV
+      is_frozen: False
+
 train_config:
     max_epochs: 20
     batch_size: 12
