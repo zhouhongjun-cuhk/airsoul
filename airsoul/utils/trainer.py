@@ -200,7 +200,7 @@ def EpochManager(cls):
                         save_model_path = model_path(self.config.save_model_path, epoch_id)
                         torch.save(self.model.state_dict(), save_model_path)
                         # Save additional iter-based model file.
-                        iter_model_path = os.path.join(self.config.save_model_path, f"model-{acc_iter_log}.pth")
+                        iter_model_path = os.path.join(self.config.save_model_path, f"model-epoch{epoch_id}-{acc_iter_log}.pth")
                         torch.save(self.model.state_dict(), iter_model_path)
                     need_break = True
 
