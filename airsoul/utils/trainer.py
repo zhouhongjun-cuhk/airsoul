@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.amp import autocast, GradScaler
 from airsoul.dataloader.prefetch_dataloader import PrefetchDataLoader
 from .tools import Configure, Logger, log_progress, log_debug, log_warn, log_fatal, log_sum_parameters_grad
-from .tools import create_folder, count_parameters, safety_check, apply_gradient_safely, custom_load_model, custom_save_model
+from .tools import create_folder, check_model_validity, model_path, count_parameters, safety_check, apply_gradient_safely, custom_load_model, custom_save_model
 from .scheduler import noam_scheduler
 
 def is_multi_node():
@@ -169,7 +169,7 @@ def EpochManager(cls):
                 return True
             return False
 
-        def run(self, device, device_type):
+        def run(self, epoch_id, device, device_type):
             if(not self._valid_epoch()):
                 return
             
@@ -255,14 +255,8 @@ def EpochManager(cls):
             
             # Save At Training Epoch End
             if(self.main and self.is_training):
-                check_model_validity(self.model.module)
-                save_model_path = model_path(self.config.save_model_path, epoch_id)
-                torch.save(self.model.state_dict(), save_model_path)
-                current_lr = self.optimizer.param_groups[0]['lr']
-                lr_file_path = os.path.join(os.path.dirname(save_model_path), f"learning_rate_epoch_{epoch_id}.txt")
-                with open(lr_file_path, 'w') as f:
-                    f.write(f"epoch: {epoch_id}, learning_rate: {current_lr:.6f}")
-                log_debug(f"Saved checkpoint to {save_model_path} and learning rate {current_lr:.6f} to {lr_file_path}", on=self.main)
+                custom_save_model(self.model, self.config.save_model_path,
+                                self.__class__.__name__, self.training_metainfo)
 
             if("training_metainfo" in self.__dict__ and self.is_training):
                 done = self.training_metainfo["epochs"] > self.config.max_epochs
@@ -386,6 +380,7 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
         evaluate_list.append(evaluate_objects[0](
             run_name=f"{config.run_name}_{dataset['name']}",
             model=model,
+            training_metainfo=object_info,
             config=test_config,
             log_config=log_config,
             rank=rank,
@@ -402,13 +397,13 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     for evaluate_object in evaluate_list:
         evaluate_object._preprocess()
 
-    def evaluate_epoch():
+    def evaluate_epoch(eid):
         for evaluate_object in evaluate_list:
             print(f"Evaluating dataset: {evaluate_object.run_name}")
             evaluate_object._epoch_start(eid)
             for _ in evaluate_object.run(eid, device, device_type):
                 pass
-            evaluate_object._epoch_end()
+            evaluate_object._epoch_end(eid)
 
     if(len(train_list) < 1):
         evaluate_epoch() # Doing single epoch evaluation
