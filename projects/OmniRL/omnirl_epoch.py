@@ -24,9 +24,6 @@ from online_rl_utils import OnlineRL, LoadRLModel
 from gym_env_wapper import DiscreteEnvWrapper, Switch2, DarkroomEnv
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
 from xenoverse.anymdp import AnyMDPTaskSampler
-from xenoverse.anymdp import AnyMDPSolverOpt, AnyMDPSolverOTS, AnyMDPSolverQ
-from xenoverse.anymdp.solver import get_final_transition, get_final_reward
-from stable_baselines3 import DQN, A2C, TD3, PPO
 
 
 def string_mean_var(downsample_length, res):
@@ -73,8 +70,9 @@ class OmniRLEpoch:
             self.reward_dropout = 0.20
 
     def compute(self, sarr, parr, tarr, baarr, rarr, laarr,
-                        epoch_id=-1, 
-                        batch_id=-1):
+                        global_batch_id=-1,
+                        local_batch_id=-1,
+                        global_epoch_id=-1):
         """
         Defining the computation function for each batch
         """
@@ -125,8 +123,8 @@ class OmniRLEpoch:
                         stat_res["loss_worldmodel_reward"]["mean"], 
                         stat_res["loss_policymodel"]["mean"], 
                         stat_res["entropy"]["mean"],
-                        epoch=epoch_id,
-                        iteration=batch_id)
+                        epoch=global_epoch_id,
+                        iteration=local_batch_id)
         else:
             loss_wm_s = torch.cat([loss["wm-s"] / torch.clamp_min(loss["count_s"], 1.0e-3) 
                     for loss in losses], dim=1)
@@ -184,7 +182,7 @@ class OmniRLGenerator(GeneratorBase):
         elif(self.config.env.lower().find("cliff") >= 0):
             self.task_sampler = self.task_sampler_cliff
         elif(self.config.env.lower().find("anymdp") >= 0):
-            self.env = gym.make("anymdp-v0", max_steps=self.max_steps)
+            self.env = gymnasium.make("anymdp-v0", max_steps=self.max_steps)
             self.task_sampler = self.task_sampler_anymdp
             if self.config.mult_anymdp_task:
                 self.mult_anymdp_task = True
@@ -196,6 +194,8 @@ class OmniRLGenerator(GeneratorBase):
             self.task_sampler = self.task_sampler_pendulum
         elif(self.config.env.lower().find("switch") >= 0):
             self.task_sampler = self.task_sampler_switch
+        elif(self.config.env.lower().find("darkroom") >= 0):
+            self.task_sampler = self.task_sampler_darkroom
         else:
             log_fatal("Unsupported environment:", self.config.env)
 
@@ -228,6 +228,9 @@ class OmniRLGenerator(GeneratorBase):
                             *benchmark_logger_keys, 
                             on=self.main, 
                             use_tensorboard=False)
+    
+    def epoch_end(self, epoch_id):
+        pass
 
     def task_sampler_anymdp(self, epoch_id=0):
         task_id = None
@@ -304,6 +307,12 @@ class OmniRLGenerator(GeneratorBase):
 
     def task_sampler_switch(self, epoch_id=0):
         self.env = Switch2(n_agents=2, full_observable=True, max_steps=self.config.max_steps)
+        return None
+
+    def task_sampler_darkroom(self, epoch_id=0):
+        state_space_dim, _ = self.extract_state_space_dimensions(self.config.env.lower(), "darkroom")
+        goal = numpy.array([state_space_dim - 1, state_space_dim - 1])
+        self.env = DarkroomEnv(state_space_dim,self.config.max_steps, goal=goal)
         return None
 
     def reward_shaping(self, done, terminated, reward):
@@ -467,6 +476,7 @@ class OmniRLGenerator(GeneratorBase):
         return True
     
     def get_exp_q(self):
+        from xenoverse.anymdp.solver import get_final_transition, get_final_reward
         t_mat = get_final_transition(
             transition=self.env.transition_matrix,
             reset_states=self.env.reset_states,
@@ -566,7 +576,12 @@ class OmniRLGenerator(GeneratorBase):
                                  max_trails=self.config.max_trails,
                                  max_steps=self.config.max_steps,
                                  downsample_trail=self.config.downsample_trail)
-            rew_stat, step_trail, success_rate = online_rl()
+            if self.config.benchmark_model_name.lower() == "cql" and  self.config.learn_from_data:
+                rew_stat, step_trail, success_rate = online_rl(offline_learning=True, 
+                                                               offline_learning_path = self.config.data_root,
+                                                               episode_end_prompt = 7)
+            else:
+                rew_stat, step_trail, success_rate = online_rl()
             ds_step_trail = downsample(step_trail, self.config.downsample_trail)
             ds_rewards = downsample(rew_stat, self.config.downsample_trail)
             ds_success = downsample(success_rate, self.config.downsample_trail)
@@ -598,11 +613,8 @@ class OmniRLGenerator(GeneratorBase):
                 while not done:
                     action= benchmark_model(new_state)
                     new_state, new_reward, terminated, truncated, *_ = self.env.step(action)
-                    if self.config.env.lower().find("anymdp") >= 0:
-                        done = terminated
-                    else:
-                        if terminated or truncated:
-                            done = True
+                    if terminated or truncated:
+                        done = True
                     shaped_reward = self.reward_shaping(done, terminated, new_reward)
                     trail_reward += new_reward
 
@@ -708,7 +720,7 @@ class OmniRLGenerator(GeneratorBase):
 
         if self.mult_anymdp_task:
             skip_task = not self.nomalize_anymdp_reward(task_id)
-            self.get_exp_q()
+            # self.get_exp_q()
             if skip_task:
                 print("Skip task: ", task_id)
                 return
@@ -781,11 +793,8 @@ class OmniRLGenerator(GeneratorBase):
                 env_action = action % self.config.action_clip 
                 # Interact with environment         
                 new_state, new_reward, terminated, truncated, *_ = self.env.step(env_action)
-                if self.config.env.lower().find("anymdp") >= 0:
-                        done = terminated
-                else:
-                    if terminated or truncated:
-                        done = True
+                if terminated or truncated:
+                    done = True
                 # Reward shaping
                 shaped_reward = self.reward_shaping(done, terminated, new_reward)
 

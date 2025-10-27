@@ -35,6 +35,14 @@ class CausalBlock(nn.Module):
                 dropout=config.dropout, 
                 context_window=config.context_window
             )
+        elif(self.model_type == "nsa"):
+            main_encoder = NSATransformerEncoder(
+                config.num_layers, 
+                config.hidden_size, 
+                config.nhead, 
+                dim_feedforward=config.inner_hidden_size, 
+                dropout=config.dropout, 
+            )
         elif(self.model_type == "gsa"):
             main_encoder = MultiBlocks(
                 GSABlock,
@@ -72,6 +80,20 @@ class CausalBlock(nn.Module):
                 max_position_encoding=config.position_encoding_size,
                 expand=config.expand,    # Block expansion factor
             )
+        elif(self.model_type == "mamba2"):
+            use_segment_input = config.use_segment_input
+            if not config.use_blockrecurrence:
+                use_segment_input = False
+            main_encoder = MultiBlocks(
+                Mamba2Layer,
+                config.num_layers,
+                need_block_wrapper=False,
+                io_size=config.hidden_size,
+                expand=config.inner_hidden_size/config.hidden_size,
+                num_heads=config.nhead,
+                use_segment_input=use_segment_input,
+                num_hidden_layers=config.num_layers,
+            )
         elif(self.model_type == "rwkv6"):
             main_encoder = MultiBlocks(
                 RWKV6Layer,
@@ -102,8 +124,8 @@ class CausalBlock(nn.Module):
                 io_size=config.hidden_size,
                 intermediate_size=config.inner_hidden_size,
                 num_heads=config.nhead,
-                expend_v = config.expend_v
-            )
+                expand_v = config.expand_v
+            )           
         else:
             raise Exception("No such causal model: %s" % config.model_type)
         

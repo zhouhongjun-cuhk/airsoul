@@ -80,18 +80,14 @@ class OmniRL(POTARDecisionModel):
             log_fatal(f"Loss weight (shape {self.loss_weight.shape[0]}) should be longer" +
                     f" than sequence length {pe}")
         loss_weight_s = None
-        loss_weight_a = (label_actions.ge(0) * label_actions.lt(self.nactions)).to(
-                    self.loss_weight.dtype)
+        loss_weight_a = None
         if(use_loss_weight):
             loss_weight_s = self.loss_weight[ps:pe]
             if self.action_dtype == "Discrete":
+                loss_weight_a = (label_actions.ge(0) * label_actions.lt(self.nactions)).to(self.loss_weight.dtype)
                 loss_weight_a = loss_weight_a * self.loss_weight[ps:pe].unsqueeze(0)
             elif self.action_dtype == "Continuous":
-                loss_weight_a = loss_weight_a * self.loss_weight[ps:pe].unsqueeze(0).unsqueeze(-1)
-                loss_weight_a = torch.mean(loss_weight_a, dim=-1, keepdim=True).squeeze(-1)
-        else:
-            if self.action_dtype == "Continuous":
-                loss_weight_a = torch.sum(loss_weight_a, dim=-1, keepdim=True).squeeze(-1)
+                loss_weight_a = self.loss_weight[ps:pe]
 
         # World Model Loss - States and Rewards
         if self.state_dtype == "Discrete":
@@ -347,15 +343,17 @@ class OmniRL(POTARDecisionModel):
                 o_pred = self.s_decoder(o_latent)
                 state = o_pred.detach().cpu().squeeze()
                 
-            reward = r_pred.detach().cpu().squeeze()
-
-            if(need_numpy):
-                state = state.numpy()
-                if(state.size < 2):
-                    state = state.item()
-                reward = reward.numpy()
-                if(reward.size < 2):
-                    reward = reward.item()
+            if r_pred is not None:
+                reward = r_pred.detach().cpu().squeeze()
+                if(need_numpy):
+                    state = state.numpy()
+                    if(state.size < 2):
+                        state = state.item()
+                    reward = reward.numpy()
+                    if(reward.size < 2):
+                        reward = reward.item()
+            else:
+                reward = 0.0
 
         else:
             state = None

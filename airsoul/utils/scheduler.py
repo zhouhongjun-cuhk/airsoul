@@ -8,6 +8,9 @@ class LinearScheduler(object):
         self._unit_values = unit_values
         self._step = 0
 
+    def reset(self, step=0):
+        self._step = step
+
     def step(self):
         self._step += 1
 
