@@ -169,7 +169,7 @@ def EpochManager(cls):
                 return True
             return False
 
-        def run(self, epoch_id, device, device_type):
+        def run(self, device, device_type):
             if(not self._valid_epoch()):
                 return
             
@@ -233,16 +233,17 @@ def EpochManager(cls):
                 # Safety Check and Save
                 need_break = False
                 if(self.is_training and self.config.has_attr("max_save_iterations") 
-                                and (self.get_global_batch_id + 1) > self.config.max_save_iterations 
+                                and (self.get_global_batch_id + 1) % self.config.max_save_iterations == 0
                                 and self.config.max_save_iterations > 0):
                     acc_iter = 0
                     log_debug("\nSAVE MODEL FOR FAIL-SAFETY...\n", on=self.main)
                     if(self.main):
                         check_model_validity(self.model.module)
-                        save_model_path = model_path(self.config.save_model_path, epoch_id)
+                        global_epoch_id=self.get_global_epoch_id
+                        save_model_path = model_path(self.config.save_model_path, global_epoch_id)
                         torch.save(self.model.state_dict(), save_model_path)
                         # Save additional iter-based model file.
-                        iter_model_path = os.path.join(self.config.save_model_path, f"model-{acc_iter_log}.pth")
+                        iter_model_path = os.path.join(self.config.save_model_path, f"model-epoch{global_epoch_id}-{acc_iter_log}.pth")
                         torch.save(self.model.state_dict(), iter_model_path)
                     need_break = True
 
@@ -269,11 +270,9 @@ def EpochManager(cls):
 
 def dist_process(rank, use_gpu, world_size, config, main_rank,
                 model_type, train_objects, evaluate_objects, extra_info):
-    """
-    """
-    local_rank = int(os.environ["LOCAL_RANK"])
     if use_gpu:
         if is_multi_node():
+            local_rank = int(os.environ["LOCAL_RANK"])
             torch.cuda.set_device(local_rank)
             device = torch.device(f'cuda:{local_rank}')
             device_type = 'cuda'
@@ -397,13 +396,13 @@ def dist_process(rank, use_gpu, world_size, config, main_rank,
     for evaluate_object in evaluate_list:
         evaluate_object._preprocess()
 
-    def evaluate_epoch(eid):
+    def evaluate_epoch():
         for evaluate_object in evaluate_list:
             print(f"Evaluating dataset: {evaluate_object.run_name}")
-            evaluate_object._epoch_start(eid)
-            for _ in evaluate_object.run(eid, device, device_type):
+            evaluate_object._epoch_start()
+            for _ in evaluate_object.run(device, device_type):
                 pass
-            evaluate_object._epoch_end(eid)
+            evaluate_object._epoch_end()
 
     if(len(train_list) < 1):
         evaluate_epoch() # Doing single epoch evaluation
