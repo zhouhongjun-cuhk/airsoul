@@ -338,7 +338,7 @@ class Switch2:
             raise ValueError(f"Unsupported mode: {mode}")
            
 class BaseEnv(gymnasium.Env):
-    def reset(self):
+    def reset(self, seed=None, options=None):
         raise NotImplementedError
 
     def transit(self, state, action):
@@ -380,21 +380,32 @@ class BaseEnv(gymnasium.Env):
         return obs, acts, next_obs, rews
     
 class DarkroomEnv(BaseEnv):
-    def __init__(self, dim, goal, horizon):
+    def __init__(self, dim, horizon, goal=None):
         self.dim = dim
-        self.goal = numpy.array(goal)
+        if goal is None:
+            self.goal = self.sample_state()
+        else:
+            self.check_goal(dim, goal)
         self.horizon = horizon
         self.state_dim = dim * dim
         self.action_dim = 4
-        # self.observation_space = gymnasium.spaces.Box(
-        #     low=0, high=dim - 1, shape=(2,))
         self.observation_space = gymnasium.spaces.Discrete(self.state_dim)
         self.action_space = gymnasium.spaces.Discrete(self.action_dim)
 
+    def check_goal(self, dim, goal):
+        if not isinstance(goal, numpy.ndarray):
+            goal = numpy.array(goal)
+        if goal.ndim != 1 or goal.shape[0] != 2:
+            raise ValueError(f"goal must be 2-element 1D array, got shape {goal.shape}")
+        if not numpy.issubdtype(goal.dtype, numpy.integer):
+            raise TypeError(f"goal must be integer type, got dtype {goal.dtype}")
+        if (goal < 0).any() or (goal >= dim).any():
+            raise ValueError(f"All elements in goal must be in [0, {dim-1}], got {goal}")
+        self.goal = goal
+    
     def sample_state(self):
         state_2d = numpy.random.randint(0, self.dim, 2)
-        state_1d = self.map_state_to_1D(state_2d)
-        return state_1d
+        return state_2d
 
     def sample_action(self):
         a = numpy.random.randint(0, 4)
@@ -403,11 +414,17 @@ class DarkroomEnv(BaseEnv):
     def map_state_to_1D(self, state):
         return state[0] * self.dim + state[1]
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            numpy.random.seed(seed)
+
         self.current_step = 0
-        self.state_2d = numpy.array([0, 0])
+        self.state_2d = self.sample_state()
+        while numpy.array_equal(self.state_2d, self.goal):
+            self.state_2d = self.sample_state()
+            
         self.state = self.map_state_to_1D(self.state_2d)
-        return self.state
+        return self.state, {}
 
     def transit(self, state, action):
         # action = numpy.argmax(action)
@@ -426,7 +443,7 @@ class DarkroomEnv(BaseEnv):
         if numpy.all(state == self.goal):
             reward = 1
         else:
-            reward = 0
+            reward = - 0.01
         return state, reward
 
     def step(self, action):
@@ -436,8 +453,9 @@ class DarkroomEnv(BaseEnv):
         self.state_2d, r = self.transit(self.state_2d, action)
         self.state = self.map_state_to_1D(self.state_2d)
         self.current_step += 1
-        done = (self.current_step >= self.horizon) or r == 1
-        return self.state.copy(), r, done, {}
+        terminated = r == 1
+        truncated = self.current_step >= self.horizon
+        return self.state.copy(), r, terminated, truncated, {}
 
     def get_obs(self):
         return self.state.copy()
