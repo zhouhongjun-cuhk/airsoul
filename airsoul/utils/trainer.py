@@ -103,7 +103,8 @@ def EpochManager(cls):
                         lr_lambda=lambda x:noam_scheduler(x, lr_decay_interval))
                     self.computer.lr_scheduler = self.lr_scheduler
                 
-                self.lr_scheduler.step(self.get_global_batch_id)
+                step = self.get('lr_start_step', config=self.config, default=0)
+                self.lr_scheduler.step(step)
 
                 self.scaler=None
                 if(self.config.use_scaler):
